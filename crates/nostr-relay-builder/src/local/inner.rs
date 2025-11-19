@@ -256,7 +256,7 @@ impl InnerLocalRelay {
         // Try to acquire connection limit
         let permit = self.connections_limit.try_acquire()?;
 
-        tracing::debug!("WebSocket connection established: {addr}");
+        tracing::info!("WebSocket connection established: {addr}");
 
         let mut new_event = self.new_event.subscribe();
 
@@ -324,7 +324,7 @@ impl InnerLocalRelay {
         // Drop connection permit
         drop(permit);
 
-        tracing::debug!("WebSocket connection terminated for {addr}");
+        tracing::info!("WebSocket connection terminated for {addr}");
 
         Ok(())
     }
@@ -536,6 +536,9 @@ impl InnerLocalRelay {
                         .await;
                     }
                 }
+
+                // Log received event
+                tracing::info!("Event received: kind={}", event.kind);
 
                 if event.kind.is_ephemeral() {
                     let event_id = event.id;
@@ -906,7 +909,12 @@ impl InnerLocalRelay {
 
         let events_len: usize = events.len();
 
-        tracing::debug!("Found {events_len} events for subscription '{subscription_id}'",);
+        // Log query results: INFO if found events, DEBUG if not found
+        if events_len > 0 {
+            tracing::info!("Found {events_len} events for subscription '{subscription_id}'");
+        } else {
+            tracing::debug!("Found 0 events for subscription '{subscription_id}'");
+        }
 
         let mut json_msgs: Vec<String> = Vec::with_capacity(events_len + 1);
 
