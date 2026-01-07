@@ -293,7 +293,17 @@ impl InnerLocalRelay {
                                 Message::Frame(..) => {}
                             }
                         }
-                        Some(Err(e)) => tracing::error!("Can't handle websocket msg: {e}"),
+                        Some(Err(e)) => {
+                            let error_msg = e.to_string();
+                            tracing::error!("Can't handle websocket msg: {e}");
+                            
+                            // Check if it's an IO error (socket not connected)
+                            // Protocol errors will cause stream to close and return None, so we don't need to break
+                            if error_msg.contains("IO error") {
+                                break;  // Exit loop for IO errors to release permit
+                            }
+                            // For protocol errors, continue loop - stream will close and return None
+                        }
                         None => break,
                     }
                 }
