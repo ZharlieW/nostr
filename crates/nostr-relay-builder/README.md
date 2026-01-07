@@ -10,25 +10,23 @@ The crate exposes two main entry points:
 ## Quick start
 
 ```rust,no_run
-use nostr_lmdb::NostrLMDB;
+use nostr_lmdb::NostrLmdb;
 use nostr_relay_builder::prelude::*;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Open a database (all databases that implements `NostrDatabase` trait can be used).
-    let database = NostrLMDB::open("nostr-relay")?;
+    let database = NostrLmdb::open("nostr-relay").await?;
 
-    // Configure the relay.
-    let builder = RelayBuilder::default()
+    // Create the relay.
+    let relay = LocalRelay::builder()
         .port(7777)
         .database(database)
         .rate_limit(RateLimit {
             max_reqs: 128,
             notes_per_minute: 30,
-        });
-
-    // Construct the relay instance.
-    let relay = LocalRelay::new(builder);
+        })
+        .build();
 
     // Start the relay.
     relay.run().await?;
@@ -51,6 +49,28 @@ The following crate feature flags are available:
 | Feature | Default | Description                                                                 |
 |---------|:-------:|-----------------------------------------------------------------------------|
 | `tor`   |   No    | Enable support for launching a hidden service using the embedded tor client |
+
+## Supported NIPs
+
+| Supported | NIP                                                                                                  |
+|:---------:|------------------------------------------------------------------------------------------------------|
+|     ✅     | [01 - Basic protocol flow description](https://github.com/nostr-protocol/nips/blob/master/01.md)     |
+|     ✅     | [09 - Event Deletion](https://github.com/nostr-protocol/nips/blob/master/09.md)                      |
+|     ❌     | [11 - Relay Information Document](https://github.com/nostr-protocol/nips/blob/master/11.md)          |
+|     ✅     | [17 - Private Direct Messages](https://github.com/nostr-protocol/nips/blob/master/17.md)             |
+|    🔧*     | [40 - Expiration Timestamp](https://github.com/nostr-protocol/nips/blob/master/40.md)                |
+|     ✅     | [42 - Authentication of clients to relays](https://github.com/nostr-protocol/nips/blob/master/42.md) |
+|     🔧     | [50 - Search Capability](https://github.com/nostr-protocol/nips/blob/master/50.md)                   |
+|     🔧     | [62 - Request to Vanish](https://github.com/nostr-protocol/nips/blob/master/62.md)                   |
+|     ✅     | [70 - Protected Events](https://github.com/nostr-protocol/nips/blob/master/70.md)                    |
+|     ✅     | [77 - Negentropy Syncing](https://github.com/nostr-protocol/nips/blob/master/77.md)                  |
+
+**Legend:**
+- ✅ Fully supported
+- 🔧 Depends on the database implementation
+- ❌ Not supported
+
+*: The relay does not accept or send expired events. The database have to delete them.
 
 ## Changelog
 

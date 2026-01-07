@@ -28,6 +28,16 @@
 ### Breaking changes
 
 - Replace `usize` with `u8` for gossip relay limits
+- Remove `autoconnect` option from `ClientOptions`
+- Change `Client::stream_events*` output to include the `RelayUrl` and `Result`, enabling callers to identify which relay sent the event or if a specific relay encountered an error (https://github.com/rust-nostr/nostr/pull/1156)
+
+### Added
+
+- Re-add support for multi-filter REQ (https://github.com/rust-nostr/nostr/pull/1176)
+
+### Added
+
+- Add `GossipAllowedRelays` to `GossipOptions` to filter relays during selection (https://github.com/rust-nostr/nostr/pull/1128)
 
 ## v0.44.1 - 2025/11/09
 

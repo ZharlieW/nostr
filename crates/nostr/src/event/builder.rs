@@ -15,9 +15,13 @@ use std::sync::Arc;
 #[cfg(feature = "pow-multi-thread")]
 use std::thread::{self, JoinHandle};
 
-#[cfg(feature = "std")]
-use secp256k1::rand::rngs::OsRng;
-use secp256k1::rand::{CryptoRng, Rng};
+#[cfg(all(feature = "std", feature = "os-rng"))]
+use rand::rngs::OsRng;
+#[cfg(all(feature = "std", feature = "os-rng"))]
+use rand::TryRngCore;
+#[cfg(feature = "rand")]
+use rand::{CryptoRng, RngCore};
+#[cfg(feature = "rand")]
 use secp256k1::{Secp256k1, Signing, Verification};
 use serde_json::{json, Value};
 
@@ -512,14 +516,15 @@ impl EventBuilder {
     ///
     /// Check [`EventBuilder::sign_with_ctx`] to learn more.
     #[inline]
-    #[cfg(feature = "std")]
+    #[cfg(all(feature = "std", feature = "os-rng"))]
     pub fn sign_with_keys(self, keys: &Keys) -> Result<Event, Error> {
-        self.sign_with_ctx(SECP256K1, &mut OsRng, &Instant::now(), keys)
+        self.sign_with_ctx(&SECP256K1, &mut OsRng.unwrap_err(), &Instant::now(), keys)
     }
 
     /// Build, sign and return [`Event`] using [`Keys`] signer
     ///
     /// Check [`EventBuilder::build_with_ctx`] to learn more.
+    #[cfg(feature = "rand")]
     pub fn sign_with_ctx<C, R, T>(
         self,
         secp: &Secp256k1<C>,
@@ -529,7 +534,7 @@ impl EventBuilder {
     ) -> Result<Event, Error>
     where
         C: Signing + Verification,
-        R: Rng + CryptoRng,
+        R: RngCore + CryptoRng,
         T: TimeSupplier,
     {
         let pubkey: PublicKey = keys.public_key();
@@ -749,21 +754,27 @@ impl EventBuilder {
                 Tag::public_key(event.pubkey),
             ])
         } else {
-            Self::new(Kind::GenericRepost, event.as_json()).tags([
-                Tag::from_standardized_without_cell(TagStandard::Event {
-                    event_id: event.id,
-                    relay_url,
-                    marker: None,
-                    // NOTE: not add public key since it's already included as `p` tag
-                    public_key: None,
-                    uppercase: false,
-                }),
-                Tag::public_key(event.pubkey),
-                Tag::from_standardized_without_cell(TagStandard::Kind {
-                    kind: event.kind,
-                    uppercase: false,
-                }),
-            ])
+            Self::new(Kind::GenericRepost, event.as_json())
+                .tag_maybe(
+                    event
+                        .coordinate()
+                        .map(|c| Tag::coordinate(c.into_owned(), relay_url.clone())),
+                )
+                .tags([
+                    Tag::from_standardized_without_cell(TagStandard::Event {
+                        event_id: event.id,
+                        relay_url,
+                        marker: None,
+                        // NOTE: not add public key since it's already included as `p` tag
+                        public_key: None,
+                        uppercase: false,
+                    }),
+                    Tag::public_key(event.pubkey),
+                    Tag::from_standardized_without_cell(TagStandard::Kind {
+                        kind: event.kind,
+                        uppercase: false,
+                    }),
+                ])
         }
     }
 
@@ -779,7 +790,7 @@ impl EventBuilder {
     ///
     /// <https://github.com/nostr-protocol/nips/blob/master/62.md>
     #[inline]
-    pub fn request_vanish<I>(target: VanishTarget) -> Result<Self, Error> {
+    pub fn request_vanish(target: VanishTarget) -> Result<Self, Error> {
         Self::request_vanish_with_reason(target, "")
     }
 
@@ -950,7 +961,12 @@ impl EventBuilder {
     ///
     /// <https://github.com/nostr-protocol/nips/blob/master/46.md>
     #[inline]
-    #[cfg(all(feature = "std", feature = "nip44", feature = "nip46"))]
+    #[cfg(all(
+        feature = "std",
+        feature = "os-rng",
+        feature = "nip44",
+        feature = "nip46"
+    ))]
     pub fn nostr_connect(
         sender_keys: &Keys,
         receiver_pubkey: PublicKey,
@@ -1020,7 +1036,7 @@ impl EventBuilder {
     /// ```rust,no_run
     /// use nostr::prelude::*;
     ///
-    /// # #[cfg(all(feature = "std", feature = "nip57"))]
+    /// # #[cfg(all(feature = "std", feature = "os-rng", feature = "nip57"))]
     /// # fn main() {
     /// # let keys = Keys::generate();
     /// # let public_key = PublicKey::from_bech32(
@@ -1036,7 +1052,7 @@ impl EventBuilder {
     /// println!("Private zap request: {private_zap:#?}");
     /// # }
     ///
-    /// # #[cfg(not(all(feature = "std", feature = "nip57")))]
+    /// # #[cfg(not(all(feature = "std", feature = "os-rng", feature = "nip57")))]
     /// # fn main() {}
     /// ```
     ///
@@ -1455,7 +1471,7 @@ impl EventBuilder {
     ///
     /// <https://github.com/nostr-protocol/nips/blob/master/59.md>
     #[inline]
-    #[cfg(all(feature = "std", feature = "nip59"))]
+    #[cfg(all(feature = "std", feature = "os-rng", feature = "nip59"))]
     pub async fn seal<T>(
         signer: &T,
         receiver_pubkey: &PublicKey,
@@ -1470,7 +1486,7 @@ impl EventBuilder {
     /// Gift Wrap from seal
     ///
     /// <https://github.com/nostr-protocol/nips/blob/master/59.md>
-    #[cfg(all(feature = "std", feature = "nip59"))]
+    #[cfg(all(feature = "std", feature = "os-rng", feature = "nip59"))]
     pub fn gift_wrap_from_seal<I>(
         receiver: &PublicKey,
         seal: &Event,
@@ -1510,7 +1526,7 @@ impl EventBuilder {
     ///
     /// <https://github.com/nostr-protocol/nips/blob/master/59.md>
     #[inline]
-    #[cfg(all(feature = "std", feature = "nip59"))]
+    #[cfg(all(feature = "std", feature = "os-rng", feature = "nip59"))]
     pub async fn gift_wrap<T, I>(
         signer: &T,
         receiver: &PublicKey,
@@ -1551,7 +1567,7 @@ impl EventBuilder {
     ///
     /// <https://github.com/nostr-protocol/nips/blob/master/17.md>
     #[inline]
-    #[cfg(all(feature = "std", feature = "nip59"))]
+    #[cfg(all(feature = "std", feature = "os-rng", feature = "nip59"))]
     pub async fn private_msg<T, S, I>(
         signer: &T,
         receiver: PublicKey,
@@ -1597,6 +1613,21 @@ impl EventBuilder {
     pub fn bookmarks(list: Bookmarks) -> Self {
         let tags: Vec<Tag> = list.into();
         Self::new(Kind::Bookmarks, "").tags(tags)
+    }
+
+    /// Blossom Server List
+    ///
+    /// <https://github.com/nostr-protocol/nips/blob/master/B7.md>
+    #[inline]
+    pub fn blossom_server_list<I>(servers: I) -> Self
+    where
+        I: IntoIterator<Item = Url>,
+    {
+        Self::new(Kind::BlossomServerList, "").tags(
+            servers
+                .into_iter()
+                .map(|s| Tag::from_standardized_without_cell(TagStandard::Server(s))),
+        )
     }
 
     /// Communities
@@ -1838,6 +1869,30 @@ impl EventBuilder {
         patch.to_event_builder()
     }
 
+    /// Git Pull Request
+    ///
+    /// <https://github.com/nostr-protocol/nips/blob/master/34.md>
+    #[inline]
+    pub fn git_pull_request(pull_request: GitPullRequest) -> Result<Self, Error> {
+        pull_request.to_event_builder()
+    }
+
+    /// Git Pull Request Update
+    ///
+    /// <https://github.com/nostr-protocol/nips/blob/master/34.md>
+    #[inline]
+    pub fn git_pull_request_update(update: GitPullRequestUpdate) -> Result<Self, Error> {
+        update.to_event_builder()
+    }
+
+    /// Git User Grasp List
+    ///
+    /// <https://github.com/nostr-protocol/nips/blob/master/34.md>
+    #[inline]
+    pub fn git_user_grasp_list(grasp_list: GitUserGraspList) -> Self {
+        grasp_list.to_event_builder()
+    }
+
     /// Torrent metadata
     ///
     /// <https://github.com/nostr-protocol/nips/blob/master/35.md>
@@ -1976,15 +2031,15 @@ fn has_nostr_event_uri(content: &str, event_id: &EventId) -> bool {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "std")]
+    #[cfg(all(feature = "std", feature = "os-rng"))]
     use core::str::FromStr;
 
     use super::*;
-    #[cfg(feature = "std")]
+    #[cfg(all(feature = "std", feature = "os-rng"))]
     use crate::SecretKey;
 
     #[test]
-    #[cfg(feature = "std")]
+    #[cfg(all(feature = "std", feature = "os-rng"))]
     fn round_trip() {
         let keys = Keys::new(
             SecretKey::from_str("6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e")
@@ -2002,7 +2057,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "std")]
+    #[cfg(all(feature = "std", feature = "os-rng"))]
     fn test_self_tagging() {
         let keys = Keys::parse("6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e")
             .unwrap();
@@ -2102,7 +2157,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "std")]
+    #[cfg(all(feature = "std", feature = "os-rng"))]
     fn test_badge_award_event_builder() {
         let keys = Keys::generate();
         let pub_key = keys.public_key();
@@ -2165,7 +2220,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "std")]
+    #[cfg(all(feature = "std", feature = "os-rng"))]
     fn test_profile_badges() {
         // The pubkey used for profile badges event
         let keys = Keys::generate();
@@ -2237,7 +2292,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "std")]
+    #[cfg(all(feature = "std", feature = "os-rng"))]
     fn test_text_note_reply() {
         let json: &str = r###"{"kind":1,"created_at":1732718325,"content":"## rust-nostr v0.37 is out! 🦀\n\n### Summary\n\nAdd support to NIP17 relay list in SDK (when `gossip` option is enabled), add NIP22 and NIP73 support, \nfix Swift Package, many performance improvements and bug fixes and more!\n\nFrom this release all the rust features are be disabled by default (except `std` feature in `nostr` crate).\n\nFull changelog: https://rust-nostr.org/changelog\n\n### Contributors\n\nThanks to all contributors!\n\n* nostr:npub1zuuajd7u3sx8xu92yav9jwxpr839cs0kc3q6t56vd5u9q033xmhsk6c2uc \n* nostr:npub1q0uulk2ga9dwkp8hsquzx38hc88uqggdntelgqrtkm29r3ass6fq8y9py9 \n* nostr:npub1zfss807aer0j26mwp2la0ume0jqde3823rmu97ra6sgyyg956e0s6xw445 \n* nostr:npub1zwnx29tj2lnem8wvjcx7avm8l4unswlz6zatk0vxzeu62uqagcash7fhrf \n* nostr:npub1acxjpdrlk2vw320dxcy3prl87g5kh4c73wp0knullrmp7c4mc7nq88gj3j \n\n### Links\n\nhttps://rust-nostr.org\nhttps://rust-nostr.org/donate\n\n#rustnostr #nostr #rustlang #programming #rust #python #javascript #kotlin #swift #flutter","tags":[["t","rustnostr"],["t","nostr"],["t","rustlang"],["t","programming"],["t","rust"],["t","python"],["t","javascript"],["t","kotlin"],["t","swift"],["t","flutter"],["p","1739d937dc8c0c7370aa27585938c119e25c41f6c441a5d34c6d38503e3136ef","","mention"],["p","03f9cfd948e95aeb04f780382344f7c1cfc0210d9af3f4006bb6d451c7b08692","","mention"],["p","126103bfddc8df256b6e0abfd7f3797c80dcc4ea88f7c2f87dd4104220b4d65f","","mention"],["p","13a665157257e79d9dcc960deeb367fd79383be2d0babb3d861679a5701d463b","","mention"],["p","ee0d20b47fb298e8a9ed3609108fe7f2296bd71e8b82fb4f9ff8f61f62bbc7a6","","mention"]],"pubkey":"68d81165918100b7da43fc28f7d1fc12554466e1115886b9e7bb326f65ec4272","id":"8262a50cf7832351ae3f21c429e111bb31be0cf754ec437e015534bf5cc2eee8","sig":"7e81ff3dfb78ba59b09b48d5218331a3259c56f702a6b8e118938a219879d60e7062e90fc1b070a4c472988d1801ec55714388efc6a4a3876a8a957c5c7808b6"}"###;
         let root_event = Event::from_json(json).unwrap();
@@ -2277,6 +2332,57 @@ mod tests {
         let mut ids = reply_of_reply.tags.event_ids().copied();
         assert_eq!(ids.next().unwrap(), reply.id);
         assert_eq!(ids.next().unwrap(), root_event.id);
+    }
+
+    #[test]
+    #[cfg(all(feature = "std", feature = "os-rng"))]
+    fn replaceable_repost() {
+        let keys = Keys::generate();
+        let replaceable = EventBuilder::mute_list(MuteList::default())
+            .sign_with_keys(&keys)
+            .unwrap();
+        let repost = EventBuilder::repost(&replaceable, None)
+            .sign_with_keys(&keys)
+            .unwrap();
+
+        assert_eq!(repost.kind, Kind::GenericRepost);
+        assert_eq!(
+            repost
+                .tags
+                .find_standardized(TagKind::single_letter(Alphabet::A, false))
+                .unwrap(),
+            &TagStandard::Coordinate {
+                coordinate: Coordinate::new(replaceable.kind, replaceable.pubkey),
+                relay_url: None,
+                uppercase: false
+            }
+        );
+    }
+
+    #[test]
+    #[cfg(all(feature = "std", feature = "os-rng"))]
+    fn addressable_repost() {
+        let keys = Keys::generate();
+        let addressable = EventBuilder::follow_set("lorem", [])
+            .sign_with_keys(&keys)
+            .unwrap();
+        let repost = EventBuilder::repost(&addressable, None)
+            .sign_with_keys(&keys)
+            .unwrap();
+
+        assert_eq!(repost.kind, Kind::GenericRepost);
+        assert_eq!(
+            repost
+                .tags
+                .find_standardized(TagKind::single_letter(Alphabet::A, false))
+                .unwrap(),
+            &TagStandard::Coordinate {
+                coordinate: Coordinate::new(addressable.kind, addressable.pubkey)
+                    .identifier("lorem"),
+                relay_url: None,
+                uppercase: false
+            }
+        );
     }
 }
 

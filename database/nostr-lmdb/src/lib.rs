@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 
 use nostr_database::prelude::*;
 
+pub mod prelude;
 mod store;
 
 use self::store::Store;
@@ -25,6 +26,10 @@ const MAP_SIZE: usize = 1024 * 1024 * 1024 * 32; // 32GB
 // 32-bit
 #[cfg(target_pointer_width = "32")]
 const MAP_SIZE: usize = 0xFFFFF000; // 4GB (2^32-4096)
+
+#[allow(missing_docs)]
+#[deprecated(since = "0.45.0", note = "Use NostrLmdb instead")]
+pub type NostrLMDB = NostrLmdb;
 
 /// Nostr LMDB database builder
 #[derive(Debug, Clone)]
@@ -88,30 +93,31 @@ impl NostrLmdbBuilder {
     }
 
     /// Build
-    pub fn build(self) -> Result<NostrLMDB, DatabaseError> {
+    pub async fn build(self) -> Result<NostrLmdb, DatabaseError> {
         let map_size: usize = self.map_size.unwrap_or(MAP_SIZE);
         let max_readers: u32 = self.max_readers.unwrap_or(126);
         let additional_dbs: u32 = self.additional_dbs.unwrap_or(0);
         let db: Store = Store::open(self.path, map_size, max_readers, additional_dbs)
+            .await
             .map_err(DatabaseError::backend)?;
-        Ok(NostrLMDB { db })
+        Ok(NostrLmdb { db })
     }
 }
 
 /// LMDB Nostr Database
 #[derive(Debug)]
-pub struct NostrLMDB {
+pub struct NostrLmdb {
     db: Store,
 }
 
-impl NostrLMDB {
+impl NostrLmdb {
     /// Open LMDB database
     #[inline]
-    pub fn open<P>(path: P) -> Result<Self, DatabaseError>
+    pub async fn open<P>(path: P) -> Result<Self, DatabaseError>
     where
         P: AsRef<Path>,
     {
-        Self::builder(path).build()
+        Self::builder(path).build().await
     }
 
     /// Get a new builder
@@ -122,12 +128,27 @@ impl NostrLMDB {
     {
         NostrLmdbBuilder::new(path)
     }
+
+    /// Re-index the database.
+    #[inline]
+    pub async fn reindex(&self) -> Result<(), DatabaseError> {
+        self.db.reindex().await.map_err(DatabaseError::backend)
+    }
 }
 
-impl NostrDatabase for NostrLMDB {
+impl NostrDatabase for NostrLmdb {
     #[inline]
     fn backend(&self) -> Backend {
         Backend::LMDB
+    }
+
+    fn features(&self) -> Features {
+        Features {
+            persistent: true,
+            event_expiration: false,
+            full_text_search: true,
+            request_to_vanish: false,
+        }
     }
 
     fn save_event<'a>(
@@ -147,21 +168,10 @@ impl NostrDatabase for NostrLMDB {
         event_id: &'a EventId,
     ) -> BoxedFuture<'a, Result<DatabaseEventStatus, DatabaseError>> {
         Box::pin(async move {
-            if self
-                .db
-                .event_is_deleted(event_id)
-                .map_err(DatabaseError::backend)?
-            {
-                Ok(DatabaseEventStatus::Deleted)
-            } else if self
-                .db
-                .has_event(event_id)
-                .map_err(DatabaseError::backend)?
-            {
-                Ok(DatabaseEventStatus::Saved)
-            } else {
-                Ok(DatabaseEventStatus::NotExistent)
-            }
+            self.db
+                .check_id(*event_id)
+                .await
+                .map_err(DatabaseError::backend)
         })
     }
 
@@ -171,17 +181,18 @@ impl NostrDatabase for NostrLMDB {
     ) -> BoxedFuture<'a, Result<Option<Event>, DatabaseError>> {
         Box::pin(async move {
             self.db
-                .get_event_by_id(event_id)
+                .get_event_by_id(*event_id)
+                .await
                 .map_err(DatabaseError::backend)
         })
     }
 
     fn count(&self, filter: Filter) -> BoxedFuture<Result<usize, DatabaseError>> {
-        Box::pin(async move { self.db.count(filter).map_err(DatabaseError::backend) })
+        Box::pin(async move { self.db.count(filter).await.map_err(DatabaseError::backend) })
     }
 
     fn query(&self, filter: Filter) -> BoxedFuture<Result<Events, DatabaseError>> {
-        Box::pin(async move { self.db.query(filter).map_err(DatabaseError::backend) })
+        Box::pin(async move { self.db.query(filter).await.map_err(DatabaseError::backend) })
     }
 
     fn negentropy_items(
@@ -191,6 +202,7 @@ impl NostrDatabase for NostrLMDB {
         Box::pin(async move {
             self.db
                 .negentropy_items(filter)
+                .await
                 .map_err(DatabaseError::backend)
         })
     }
@@ -213,13 +225,13 @@ mod tests {
     use super::*;
 
     struct TempDatabase {
-        db: NostrLMDB,
+        db: NostrLmdb,
         // Needed to avoid the drop and deletion of temp folder
         _temp: TempDir,
     }
 
     impl Deref for TempDatabase {
-        type Target = NostrLMDB;
+        type Target = NostrLmdb;
 
         fn deref(&self) -> &Self::Target {
             &self.db
@@ -227,18 +239,14 @@ mod tests {
     }
 
     impl TempDatabase {
-        fn new() -> Self {
+        async fn new() -> Self {
             let path = tempfile::tempdir().unwrap();
             Self {
-                db: NostrLMDB::open(&path).unwrap(),
+                db: NostrLmdb::open(&path).await.unwrap(),
                 _temp: path,
             }
         }
     }
 
-    async fn setup() -> TempDatabase {
-        TempDatabase::new()
-    }
-
-    database_unit_tests!(TempDatabase, setup);
+    database_unit_tests!(TempDatabase, TempDatabase::new);
 }

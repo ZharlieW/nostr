@@ -23,6 +23,22 @@
 
 -->
 
+## Unreleased
+
+### Breaking changes
+
+- Remove `Backend::is_persistent` method (https://github.com/rust-nostr/nostr/pull/1138)
+- Use `NonZeroUsize` for bounded capacities instead of `usize` (https://github.com/rust-nostr/nostr/pull/1139)
+
+### Changed
+
+- Extend `Backend` variants (https://github.com/rust-nostr/nostr/pull/1138)
+
+### Added
+
+- Add `Backend::custom` constructor (https://github.com/rust-nostr/nostr/pull/1138)
+- Add `NostrDatabase::features` method (https://github.com/rust-nostr/nostr/pull/1138)
+
 ## v0.44.0 - 2025/11/06
 
 No notable changes in this release.

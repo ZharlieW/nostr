@@ -13,7 +13,7 @@ use tokio::sync::RwLock;
 
 use crate::{
     Backend, DatabaseError, DatabaseEventResult, DatabaseEventStatus, DatabaseHelper, Events,
-    NostrDatabase, SaveEventStatus,
+    Features, NostrDatabase, SaveEventStatus,
 };
 
 const MAX_EVENTS: usize = 35_000;
@@ -28,14 +28,16 @@ pub struct MemoryDatabaseOptions {
     /// `None` means no limits.
     ///
     /// If `Some(0)` is passed, the default value will be used.
-    pub max_events: Option<usize>,
+    pub max_events: Option<NonZeroUsize>,
 }
 
 impl Default for MemoryDatabaseOptions {
     fn default() -> Self {
         Self {
             events: false,
-            max_events: Some(MAX_EVENTS),
+            max_events: Some(
+                NonZeroUsize::new(MAX_EVENTS).expect("BUG: MAX_EVENTS must be greater than zero"),
+            ),
         }
     }
 }
@@ -74,12 +76,7 @@ impl MemoryDatabase {
     }
 
     /// New Memory database
-    pub fn with_opts(mut opts: MemoryDatabaseOptions) -> Self {
-        // Check if `Some(0)`
-        if let Some(0) = opts.max_events {
-            opts.max_events = Some(MAX_EVENTS);
-        }
-
+    pub fn with_opts(opts: MemoryDatabaseOptions) -> Self {
         // Check if event storing is allowed
         let inner: InnerMemoryDatabase = if opts.events {
             let helper: DatabaseHelper = match opts.max_events {
@@ -89,12 +86,8 @@ impl MemoryDatabase {
             InnerMemoryDatabase::Full(helper)
         } else {
             let cache: LruCache<EventId, ()> = match opts.max_events {
-                Some(max) if max > 0 => {
-                    // SAFETY: checked above if > 0
-                    let max: NonZeroUsize = NonZeroUsize::new(max).unwrap();
-                    LruCache::new(max)
-                }
-                _ => LruCache::unbounded(),
+                Some(max) => LruCache::new(max),
+                None => LruCache::unbounded(),
             };
             InnerMemoryDatabase::Tracker(Arc::new(RwLock::new(cache)))
         };
@@ -106,6 +99,18 @@ impl MemoryDatabase {
 impl NostrDatabase for MemoryDatabase {
     fn backend(&self) -> Backend {
         Backend::Memory
+    }
+
+    fn features(&self) -> Features {
+        Features {
+            persistent: false,
+            event_expiration: false,
+            full_text_search: match &self.inner {
+                InnerMemoryDatabase::Tracker(..) => false,
+                InnerMemoryDatabase::Full(..) => true,
+            },
+            request_to_vanish: false,
+        }
     }
 
     fn save_event<'a>(

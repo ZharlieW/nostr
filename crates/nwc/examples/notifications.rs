@@ -25,14 +25,14 @@ async fn main() -> Result<()> {
         .ok_or("Please provide NWC URI as argument or set NWC_URI environment variable")?;
 
     let uri =
-        NostrWalletConnectURI::from_str(&uri_str).map_err(|e| format!("Invalid NWC URI: {}", e))?;
+        NostrWalletConnectUri::from_str(&uri_str).map_err(|e| format!("Invalid NWC URI: {}", e))?;
 
     println!("📡 Relay: {:?}", uri.relays);
     println!("🔑 Wallet pubkey: {}", uri.public_key);
 
     println!("🔗 Connecting to wallet service...");
 
-    let nwc = NWC::new(uri);
+    let nwc = NostrWalletConnect::new(uri);
 
     nwc.subscribe_to_notifications().await?;
 

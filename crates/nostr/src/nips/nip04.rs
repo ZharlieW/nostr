@@ -18,9 +18,12 @@ use aes::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit};
 use aes::Aes256;
 use base64::engine::{general_purpose, Engine};
 use cbc::{Decryptor, Encryptor};
-#[cfg(feature = "std")]
-use secp256k1::rand;
-use secp256k1::rand::RngCore;
+#[cfg(all(feature = "std", feature = "os-rng"))]
+use rand::rngs::OsRng;
+#[cfg(feature = "rand")]
+use rand::RngCore;
+#[cfg(all(feature = "std", feature = "os-rng"))]
+use rand::TryRngCore;
 
 use crate::{key, util, PublicKey, SecretKey};
 
@@ -69,7 +72,7 @@ impl From<key::Error> for Error {
 ///
 /// <div class="warning"><strong>Unsecure!</strong> Deprecated in favor of NIP17!</div>
 #[inline]
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "os-rng"))]
 pub fn encrypt<T>(
     secret_key: &SecretKey,
     public_key: &PublicKey,
@@ -78,12 +81,13 @@ pub fn encrypt<T>(
 where
     T: AsRef<[u8]>,
 {
-    encrypt_with_rng(&mut rand::thread_rng(), secret_key, public_key, content)
+    encrypt_with_rng(&mut OsRng.unwrap_err(), secret_key, public_key, content)
 }
 
 /// Encrypt
 ///
 /// <div class="warning"><strong>Unsecure!</strong> Deprecated in favor of NIP17!</div>
+#[cfg(feature = "rand")]
 pub fn encrypt_with_rng<R, T>(
     rng: &mut R,
     secret_key: &SecretKey,
@@ -94,12 +98,27 @@ where
     R: RngCore,
     T: AsRef<[u8]>,
 {
-    // Generate key
-    let key: [u8; 32] = util::generate_shared_key(secret_key, public_key)?;
-
     // Generate iv
     let mut iv: [u8; 16] = [0u8; 16];
     rng.fill_bytes(&mut iv);
+
+    encrypt_with_iv(secret_key, public_key, content, iv)
+}
+
+/// Encrypt
+///
+/// <div class="warning"><strong>Unsecure!</strong> Deprecated in favor of NIP17!</div>
+pub fn encrypt_with_iv<T>(
+    secret_key: &SecretKey,
+    public_key: &PublicKey,
+    content: T,
+    iv: [u8; 16],
+) -> Result<String, Error>
+where
+    T: AsRef<[u8]>,
+{
+    // Generate key
+    let key: [u8; 32] = util::generate_shared_key(secret_key, public_key)?;
 
     // Compose cipher
     let cipher = Aes256CbcEnc::new(&key.into(), &iv.into());
@@ -164,8 +183,7 @@ where
     String::from_utf8(result).map_err(|_| Error::Utf8Encode)
 }
 
-#[cfg(test)]
-#[cfg(feature = "std")]
+#[cfg(all(test, feature = "std", feature = "os-rng"))]
 mod tests {
     use core::str::FromStr;
 

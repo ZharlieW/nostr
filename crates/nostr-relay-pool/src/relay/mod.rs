@@ -514,11 +514,14 @@ impl Relay {
     /// It's possible to automatically close a subscription by configuring the [SubscribeOptions].
     ///
     /// Note: auto-closing subscriptions aren't saved in subscriptions map!
-    pub async fn subscribe(
+    pub async fn subscribe<F>(
         &self,
-        filters: Filter,
+        filters: F,
         opts: SubscribeOptions,
-    ) -> Result<SubscriptionId, Error> {
+    ) -> Result<SubscriptionId, Error>
+    where
+        F: Into<Vec<Filter>>,
+    {
         let id: SubscriptionId = SubscriptionId::generate();
         self.subscribe_with_id(id.clone(), filters, opts).await?;
         Ok(id)
@@ -648,17 +651,29 @@ impl Relay {
     }
 
     /// Fetch events
-    pub async fn fetch_events(
+    pub async fn fetch_events<F>(
         &self,
-        filter: Filter,
+        filters: F,
         timeout: Duration,
         policy: ReqExitPolicy,
-    ) -> Result<Events, Error> {
+    ) -> Result<Events, Error>
+    where
+        F: Into<Vec<Filter>>,
+    {
+        let filters: Vec<Filter> = filters.into();
+
         // Construct a new events collection
-        let mut events: Events = Events::new(&filter);
+        let mut events: Events = if filters.len() == 1 {
+            // SAFETY: this can't panic because the filters are already verified that list isn't empty.
+            let filter: &Filter = &filters[0];
+            Events::new(filter)
+        } else {
+            // More than a filter, so we can't ensure to respect the limit -> construct a default collection.
+            Events::default()
+        };
 
         // Stream events
-        let mut stream = self.stream_events(filter, timeout, policy).await?;
+        let mut stream = self.stream_events(filters, timeout, policy).await?;
 
         while let Some(res) = stream.next().await {
             // Get event from the result
@@ -781,7 +796,7 @@ mod tests {
     use async_utility::time;
     use nostr_relay_builder::prelude::*;
 
-    use super::{Error, *};
+    use super::{Error, SyncOptions, *};
     use crate::policy::{AdmitPolicy, PolicyError};
 
     #[derive(Debug)]
@@ -1057,7 +1072,7 @@ mod tests {
     #[tokio::test]
     async fn test_disconnect_unresponsive_relay_that_connect() {
         // Mock relay
-        let opts = RelayTestOptions {
+        let opts = LocalRelayTestOptions {
             unresponsive_connection: Some(Duration::from_secs(2)),
             ..Default::default()
         };
@@ -1090,7 +1105,7 @@ mod tests {
     #[tokio::test]
     async fn test_disconnect_unresponsive_relay_that_not_connect() {
         // Mock relay
-        let opts = RelayTestOptions {
+        let opts = LocalRelayTestOptions {
             unresponsive_connection: Some(Duration::from_secs(10)),
             ..Default::default()
         };
@@ -1119,7 +1134,7 @@ mod tests {
     #[tokio::test]
     async fn test_disconnect_unresponsive_during_try_connect() {
         // Mock relay
-        let opts = RelayTestOptions {
+        let opts = LocalRelayTestOptions {
             unresponsive_connection: Some(Duration::from_secs(10)),
             ..Default::default()
         };
@@ -1183,7 +1198,7 @@ mod tests {
     #[tokio::test]
     async fn test_wait_for_connection() {
         // Mock relay
-        let opts = RelayTestOptions {
+        let opts = LocalRelayTestOptions {
             unresponsive_connection: Some(Duration::from_secs(2)),
             ..Default::default()
         };
@@ -1208,7 +1223,7 @@ mod tests {
     #[tokio::test]
     async fn test_fetch_events_ban_relay() {
         // Mock relay
-        let opts = RelayTestOptions {
+        let opts = LocalRelayTestOptions {
             unresponsive_connection: None,
             send_random_events: true,
         };
@@ -1242,7 +1257,7 @@ mod tests {
     #[tokio::test]
     async fn test_subscribe_ban_relay() {
         // Mock relay
-        let opts = RelayTestOptions {
+        let opts = LocalRelayTestOptions {
             unresponsive_connection: None,
             send_random_events: true,
         };
@@ -1285,11 +1300,10 @@ mod tests {
     #[tokio::test]
     async fn test_nip42_send_event() {
         // Mock relay
-        let opts = RelayBuilderNip42 {
-            mode: RelayBuilderNip42Mode::Write,
+        let opts = LocalRelayBuilderNip42 {
+            mode: LocalRelayBuilderNip42Mode::Write,
         };
-        let builder = RelayBuilder::default().nip42(opts);
-        let mock = LocalRelay::new(builder);
+        let mock = LocalRelay::builder().nip42(opts).build();
         mock.run().await.unwrap();
         let url = mock.url().await;
 
@@ -1329,11 +1343,10 @@ mod tests {
     #[tokio::test]
     async fn test_nip42_fetch_events() {
         // Mock relay
-        let opts = RelayBuilderNip42 {
-            mode: RelayBuilderNip42Mode::Read,
+        let opts = LocalRelayBuilderNip42 {
+            mode: LocalRelayBuilderNip42Mode::Read,
         };
-        let builder = RelayBuilder::default().nip42(opts);
-        let mock = LocalRelay::new(builder);
+        let mock = LocalRelay::builder().nip42(opts).build();
         mock.run().await.unwrap();
         let url = mock.url().await;
 

@@ -28,11 +28,19 @@ use super::lmdb::Lmdb;
 const FLATBUFFER_CAPACITY: usize = 70_000;
 
 enum OperationResult {
+    Reindex {
+        result: Result<(), Error>,
+        tx: Option<oneshot::Sender<Result<(), Error>>>,
+    },
     Save {
         result: Result<SaveEventStatus, Error>,
         tx: Option<oneshot::Sender<Result<SaveEventStatus, Error>>>,
     },
     Delete {
+        result: Result<(), Error>,
+        tx: Option<oneshot::Sender<Result<(), Error>>>,
+    },
+    Wipe {
         result: Result<(), Error>,
         tx: Option<oneshot::Sender<Result<(), Error>>>,
     },
@@ -42,6 +50,15 @@ impl OperationResult {
     /// Send the result through the channel if present, or log errors
     fn send(self) {
         match self {
+            Self::Reindex { result, tx } => {
+                if let Some(tx) = tx {
+                    if tx.send(result).is_err() {
+                        tracing::debug!("Failed to send rebuild index result: receiver dropped");
+                    }
+                } else if let Err(e) = result {
+                    tracing::error!(error = %e, "Failed to rebuild index");
+                }
+            }
             Self::Save { result, tx } => {
                 if let Some(tx) = tx {
                     if tx.send(result).is_err() {
@@ -60,11 +77,23 @@ impl OperationResult {
                     tracing::error!(error = %e, "Delete operation failed in batch");
                 }
             }
+            Self::Wipe { result, tx } => {
+                if let Some(tx) = tx {
+                    if tx.send(result).is_err() {
+                        tracing::debug!("Failed to send wipe result: receiver dropped");
+                    }
+                } else if let Err(e) = result {
+                    tracing::error!(error = %e, "Wipe operation failed in batch");
+                }
+            }
         }
     }
 }
 
 enum IngesterOperation {
+    Reindex {
+        tx: Option<oneshot::Sender<Result<(), Error>>>,
+    },
     SaveEvent {
         event: Event,
         tx: Option<oneshot::Sender<Result<SaveEventStatus, Error>>>,
@@ -73,17 +102,28 @@ enum IngesterOperation {
         filter: Filter,
         tx: Option<oneshot::Sender<Result<(), Error>>>,
     },
+    Wipe {
+        tx: Option<oneshot::Sender<Result<(), Error>>>,
+    },
 }
 
 impl IngesterOperation {
     /// Create an error result for this operation type, moving the channel
     fn into_error_result(self, error: Error) -> OperationResult {
         match self {
+            Self::Reindex { tx } => OperationResult::Reindex {
+                result: Err(error),
+                tx,
+            },
             Self::SaveEvent { tx, .. } => OperationResult::Save {
                 result: Err(error),
                 tx,
             },
             Self::Delete { tx, .. } => OperationResult::Delete {
+                result: Err(error),
+                tx,
+            },
+            Self::Wipe { tx } => OperationResult::Wipe {
                 result: Err(error),
                 tx,
             },
@@ -96,6 +136,15 @@ pub(super) struct IngesterItem {
 }
 
 impl IngesterItem {
+    #[must_use]
+    pub(super) fn reindex() -> (Self, oneshot::Receiver<Result<(), Error>>) {
+        let (tx, rx) = oneshot::channel();
+        let item: Self = Self {
+            operation: IngesterOperation::Reindex { tx: Some(tx) },
+        };
+        (item, rx)
+    }
+
     #[must_use]
     pub(super) fn save_event_with_feedback(
         event: Event,
@@ -120,6 +169,15 @@ impl IngesterItem {
                 filter,
                 tx: Some(tx),
             },
+        };
+        (item, rx)
+    }
+
+    #[must_use]
+    pub(super) fn wipe_with_feedback() -> (Self, oneshot::Receiver<Result<(), Error>>) {
+        let (tx, rx) = oneshot::channel();
+        let item: Self = Self {
+            operation: IngesterOperation::Wipe { tx: Some(tx) },
         };
         (item, rx)
     }
@@ -270,6 +328,10 @@ impl Ingester {
         fbb: &mut FlatBufferBuilder,
     ) -> OperationResult {
         match item.operation {
+            IngesterOperation::Reindex { tx } => OperationResult::Reindex {
+                result: self.db.reindex(txn),
+                tx,
+            },
             IngesterOperation::SaveEvent { event, tx } => {
                 let result = self.db.save_event_with_txn(txn, fbb, &event);
                 OperationResult::Save { result, tx }
@@ -277,6 +339,10 @@ impl Ingester {
             IngesterOperation::Delete { filter, tx } => {
                 let result = self.db.delete(txn, filter);
                 OperationResult::Delete { result, tx }
+            }
+            IngesterOperation::Wipe { tx } => {
+                let result = self.db.wipe(txn);
+                OperationResult::Wipe { result, tx }
             }
         }
     }
@@ -287,10 +353,14 @@ fn mark_all_as_failed(results: &mut [OperationResult]) {
     // All previously processed operations get BatchTransactionFailed error
     for prev_result in results.iter_mut() {
         match prev_result {
+            OperationResult::Reindex { result: res, .. } => {
+                *res = Err(Error::BatchTransactionFailed)
+            }
             OperationResult::Save { result: res, .. } => *res = Err(Error::BatchTransactionFailed),
             OperationResult::Delete { result: res, .. } => {
                 *res = Err(Error::BatchTransactionFailed)
             }
+            OperationResult::Wipe { result: res, .. } => *res = Err(Error::BatchTransactionFailed),
         }
     }
 }
@@ -309,6 +379,7 @@ mod tests {
     async fn setup_test_store() -> (Arc<Store>, TempDir) {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let store = Store::open(temp_dir.path(), 1024 * 1024 * 10, 10, 50)
+            .await
             .expect("Failed to open test store");
         (Arc::new(store), temp_dir)
     }
@@ -359,7 +430,11 @@ mod tests {
         assert!(matches!(results[2], Ok(SaveEventStatus::Success)));
 
         // Verify the new events were saved
-        let saved_count = store.query(Filter::new()).expect("Failed to query").len();
+        let saved_count = store
+            .query(Filter::new())
+            .await
+            .expect("Failed to query")
+            .len();
         assert_eq!(saved_count, 3); // event1, event2, event3
     }
 
@@ -403,7 +478,11 @@ mod tests {
         delete_result.expect("Failed to delete events");
 
         // Verify results
-        let remaining = store.query(Filter::new()).expect("Failed to query").len();
+        let remaining = store
+            .query(Filter::new())
+            .await
+            .expect("Failed to query")
+            .len();
 
         // We had 10 events, deleted 5, added 2
         assert_eq!(remaining, 7);

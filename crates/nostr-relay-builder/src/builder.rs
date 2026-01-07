@@ -4,8 +4,10 @@
 
 //! Relay Builder
 
+use std::borrow::Cow;
 use std::fmt;
 use std::net::{IpAddr, SocketAddr};
+use std::num::NonZeroUsize;
 #[cfg(all(feature = "tor", any(target_os = "android", target_os = "ios")))]
 use std::path::Path;
 #[cfg(feature = "tor")]
@@ -14,6 +16,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use nostr_database::prelude::*;
+
+use crate::local::LocalRelay;
 
 /// Rate limit
 #[derive(Debug, Clone)]
@@ -34,10 +38,18 @@ impl Default for RateLimit {
     }
 }
 
+#[cfg(feature = "tor")]
+#[allow(missing_docs)]
+#[deprecated(
+    since = "0.45.0",
+    note = "Use `LocalRelayBuilderHiddenService` instead"
+)]
+pub type RelayBuilderHiddenService = LocalRelayBuilderHiddenService;
+
 /// Relay builder tor hidden service options
 #[derive(Debug, Clone)]
 #[cfg(feature = "tor")]
-pub struct RelayBuilderHiddenService {
+pub struct LocalRelayBuilderHiddenService {
     /// Nickname (local identifier) for a Tor hidden service
     ///
     /// Used to look up this service's keys, state, configuration, etc., and distinguish them from other services.
@@ -47,7 +59,7 @@ pub struct RelayBuilderHiddenService {
 }
 
 #[cfg(feature = "tor")]
-impl RelayBuilderHiddenService {
+impl LocalRelayBuilderHiddenService {
     /// New tor hidden service options
     ///
     /// The nickname is a local identifier for a Tor hidden service.
@@ -82,9 +94,13 @@ impl RelayBuilderHiddenService {
     }
 }
 
+#[allow(missing_docs)]
+#[deprecated(since = "0.45.0", note = "Use `LocalRelayBuilderMode` instead")]
+pub type RelayBuilderMode = LocalRelayBuilderMode;
+
 /// Mode
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum RelayBuilderMode {
+pub enum LocalRelayBuilderMode {
     /// Generic mode
     #[default]
     Generic,
@@ -94,12 +110,70 @@ pub enum RelayBuilderMode {
     PublicKey(PublicKey),
 }
 
-/// Generic plugin policy response
-pub enum PolicyResult {
-    /// Policy enforces that the event/query should be accepted
+/// Write policy result
+pub enum WritePolicyResult {
+    /// Continue processing the event without taking any action.
     Accept,
-    /// Policy enforces that the event/query should be rejected
-    Reject(String),
+    /// Stop processing the event and reply with a OK message with a status.
+    Reject {
+        /// The rejection message to be sent.
+        message: Cow<'static, str>,
+        /// Indicates whether the operation was successful.
+        status: bool,
+    },
+}
+
+impl WritePolicyResult {
+    /// Stops processing and send a success message. Check [MachineReadablePrefix]
+    #[inline]
+    pub fn ok_msg<S>(msg: S) -> Self
+    where
+        S: Into<Cow<'static, str>>,
+    {
+        Self::Reject {
+            message: msg.into(),
+            status: true,
+        }
+    }
+
+    /// Stops processing and send a rejection message. Check [MachineReadablePrefix]
+    #[inline]
+    pub fn reject<S>(msg: S) -> Self
+    where
+        S: Into<Cow<'static, str>>,
+    {
+        Self::Reject {
+            message: msg.into(),
+            status: false,
+        }
+    }
+}
+
+/// Query policy result
+pub enum QueryPolicyResult {
+    /// Accept the query
+    Accept,
+    /// Reject the query
+    Reject {
+        /// The reject message prefix.
+        prefix: MachineReadablePrefix,
+        /// The reject message.
+        message: Cow<'static, str>,
+    },
+}
+
+impl QueryPolicyResult {
+    /// Reject the query
+    #[inline]
+    pub fn reject<S>(prefix: MachineReadablePrefix, msg: S) -> Self
+    where
+        S: Into<Cow<'static, str>>,
+    {
+        Self::Reject {
+            prefix,
+            message: msg.into(),
+        }
+    }
 }
 
 /// Custom policy for accepting events into the relay database
@@ -109,7 +183,7 @@ pub trait WritePolicy: fmt::Debug + Send + Sync {
         &'a self,
         event: &'a Event,
         addr: &'a SocketAddr,
-    ) -> BoxedFuture<'a, PolicyResult>;
+    ) -> BoxedFuture<'a, WritePolicyResult>;
 }
 
 /// Filters REQ's to the internal relay database
@@ -119,21 +193,29 @@ pub trait QueryPolicy: fmt::Debug + Send + Sync {
         &'a self,
         query: &'a Filter,
         addr: &'a SocketAddr,
-    ) -> BoxedFuture<'a, PolicyResult>;
+    ) -> BoxedFuture<'a, QueryPolicyResult>;
 }
+
+#[allow(missing_docs)]
+#[deprecated(since = "0.45.0", note = "Use `LocalRelayTestOptions` instead")]
+pub type RelayTestOptions = LocalRelayTestOptions;
 
 /// Testing options
 #[derive(Debug, Clone, Default)]
-pub struct RelayTestOptions {
+pub struct LocalRelayTestOptions {
     /// Simulate unresponsive connection
     pub unresponsive_connection: Option<Duration>,
     /// Send random events to the clients
     pub send_random_events: bool,
 }
 
+#[allow(missing_docs)]
+#[deprecated(since = "0.45.0", note = "Use `LocalRelayBuilderNip42Mode` instead")]
+pub type RelayBuilderNip42Mode = LocalRelayBuilderNip42Mode;
+
 /// NIP42 mode
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum RelayBuilderNip42Mode {
+pub enum LocalRelayBuilderNip42Mode {
     /// Require authentication for writing
     Write,
     /// Require authentication for reading
@@ -143,32 +225,40 @@ pub enum RelayBuilderNip42Mode {
     Both,
 }
 
-impl RelayBuilderNip42Mode {
-    /// Check if is [`RelayBuilderNip42Mode::Read`] or [`RelayBuilderNip42Mode::Both`]
+impl LocalRelayBuilderNip42Mode {
+    /// Check if is [`LocalRelayBuilderNip42Mode::Read`] or [`LocalRelayBuilderNip42Mode::Both`]
     #[inline]
     pub fn is_read(&self) -> bool {
         matches!(self, Self::Read | Self::Both)
     }
 
-    /// Check if is [`RelayBuilderNip42Mode::Write`] or [`RelayBuilderNip42Mode::Both`]
+    /// Check if is [`LocalRelayBuilderNip42Mode::Write`] or [`LocalRelayBuilderNip42Mode::Both`]
     #[inline]
     pub fn is_write(&self) -> bool {
         matches!(self, Self::Write | Self::Both)
     }
 }
 
+#[allow(missing_docs)]
+#[deprecated(since = "0.45.0", note = "Use `LocalRelayBuilderNip42` instead")]
+pub type RelayBuilderNip42 = LocalRelayBuilderNip42;
+
 /// NIP42 options
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct RelayBuilderNip42 {
+pub struct LocalRelayBuilderNip42 {
     /// Mode
-    pub mode: RelayBuilderNip42Mode,
+    pub mode: LocalRelayBuilderNip42Mode,
     // /// Allowed public keys
     // pub allowed: HashSet<PublicKey>,
 }
 
-/// Relay builder
+#[allow(missing_docs)]
+#[deprecated(since = "0.45.0", note = "Use `LocalRelayBuilder` instead")]
+pub type RelayBuilder = LocalRelayBuilder;
+
+/// Local relay builder
 #[derive(Debug, Clone)]
-pub struct RelayBuilder {
+pub struct LocalRelayBuilder {
     /// IP address
     pub(crate) addr: Option<IpAddr>,
     /// Port
@@ -176,14 +266,14 @@ pub struct RelayBuilder {
     /// Database
     pub(crate) database: Arc<dyn NostrDatabase>,
     /// Mode
-    pub(crate) mode: RelayBuilderMode,
+    pub(crate) mode: LocalRelayBuilderMode,
     /// Rate limit
     pub(crate) rate_limit: RateLimit,
     /// NIP42 options
-    pub(crate) nip42: Option<RelayBuilderNip42>,
+    pub(crate) nip42: Option<LocalRelayBuilderNip42>,
     /// Tor hidden service
     #[cfg(feature = "tor")]
-    pub(crate) tor: Option<RelayBuilderHiddenService>,
+    pub(crate) tor: Option<LocalRelayBuilderHiddenService>,
     /// Max connections allowed
     pub(crate) max_connections: Option<usize>,
     /// Max subscription ID length
@@ -197,24 +287,24 @@ pub struct RelayBuilder {
     pub(crate) auth_dm: bool,
     /// Min POW difficulty
     pub(crate) min_pow: Option<u8>,
-    /// Write policy plugins
-    pub(crate) write_plugins: Vec<Arc<dyn WritePolicy>>,
-    /// Query policy plugins
-    pub(crate) query_plugins: Vec<Arc<dyn QueryPolicy>>,
+    /// Write policy
+    pub(crate) write_policy: Option<Arc<dyn WritePolicy>>,
+    /// Query policy
+    pub(crate) query_policy: Option<Arc<dyn QueryPolicy>>,
     /// Test options
-    pub(crate) test: RelayTestOptions,
+    pub(crate) test: LocalRelayTestOptions,
 }
 
-impl Default for RelayBuilder {
+impl Default for LocalRelayBuilder {
     fn default() -> Self {
         Self {
             addr: None,
             port: None,
             database: Arc::new(MemoryDatabase::with_opts(MemoryDatabaseOptions {
                 events: true,
-                max_events: Some(75_000),
+                max_events: Some(NonZeroUsize::new(75_000).unwrap()),
             })),
-            mode: RelayBuilderMode::default(),
+            mode: LocalRelayBuilderMode::default(),
             rate_limit: RateLimit::default(),
             nip42: None,
             #[cfg(feature = "tor")]
@@ -225,14 +315,14 @@ impl Default for RelayBuilder {
             default_filter_limit: 500,
             auth_dm: false,
             min_pow: None,
-            write_plugins: Vec::new(),
-            query_plugins: Vec::new(),
-            test: RelayTestOptions::default(),
+            write_policy: None,
+            query_policy: None,
+            test: LocalRelayTestOptions::default(),
         }
     }
 }
 
-impl RelayBuilder {
+impl LocalRelayBuilder {
     /// Set IP address
     #[inline]
     pub fn addr(mut self, ip: IpAddr) -> Self {
@@ -259,7 +349,7 @@ impl RelayBuilder {
 
     /// Set mode
     #[inline]
-    pub fn mode(mut self, mode: RelayBuilderMode) -> Self {
+    pub fn mode(mut self, mode: LocalRelayBuilderMode) -> Self {
         self.mode = mode;
         self
     }
@@ -273,7 +363,7 @@ impl RelayBuilder {
 
     /// Require NIP42 authentication
     #[inline]
-    pub fn nip42(mut self, opts: RelayBuilderNip42) -> Self {
+    pub fn nip42(mut self, opts: LocalRelayBuilderNip42) -> Self {
         self.nip42 = Some(opts);
         self
     }
@@ -281,7 +371,7 @@ impl RelayBuilder {
     /// Set tor options
     #[inline]
     #[cfg(feature = "tor")]
-    pub fn tor(mut self, opts: RelayBuilderHiddenService) -> Self {
+    pub fn tor(mut self, opts: LocalRelayBuilderHiddenService) -> Self {
         self.tor = Some(opts);
         self
     }
@@ -334,30 +424,36 @@ impl RelayBuilder {
         self
     }
 
-    /// Add a write policy plugin
+    /// Set a **write** policy plugin
     #[inline]
     pub fn write_policy<T>(mut self, policy: T) -> Self
     where
         T: WritePolicy + 'static,
     {
-        self.write_plugins.push(Arc::new(policy));
+        self.write_policy = Some(Arc::new(policy));
         self
     }
 
-    /// Add a query policy plugin
+    /// Set a **query** policy plugin
     #[inline]
     pub fn query_policy<T>(mut self, policy: T) -> Self
     where
         T: QueryPolicy + 'static,
     {
-        self.query_plugins.push(Arc::new(policy));
+        self.query_policy = Some(Arc::new(policy));
         self
     }
 
     /// Testing options
     #[inline]
-    pub(crate) fn test(mut self, test: RelayTestOptions) -> Self {
+    pub(crate) fn test(mut self, test: LocalRelayTestOptions) -> Self {
         self.test = test;
         self
+    }
+
+    /// Build local relay
+    #[inline]
+    pub fn build(self) -> LocalRelay {
+        LocalRelay::from_builder(self)
     }
 }

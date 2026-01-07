@@ -38,30 +38,64 @@ pub use self::profile::Profile;
 /// NIP65 relays map
 pub type RelaysMap = HashMap<RelayUrl, Option<RelayMetadata>>;
 
-/// Backend
+/// Backend type
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Backend {
-    /// Memory
+    /// In-memory (RAM)
     Memory,
-    /// RocksDB
-    RocksDB,
     /// Lightning Memory-Mapped Database
     LMDB,
     /// SQLite
     SQLite,
+    /// Postgres
+    Postgres,
+    /// MySQL (i.e., MariaDB)
+    MySql,
+    /// RocksDB
+    RocksDB,
     /// IndexedDB
     IndexedDB,
+    /// MongoDB
+    MongoDB,
+    /// Redis
+    Redis,
+    /// Apache Cassandra
+    Cassandra,
     /// Custom
     Custom(String),
 }
 
 impl Backend {
-    /// Check if it's a persistent backend
-    ///
-    /// All values different from [`Backend::Memory`] are considered persistent
-    pub fn is_persistent(&self) -> bool {
-        !matches!(self, Self::Memory)
+    /// Custom backend type
+    #[inline]
+    pub fn custom<T>(name: T) -> Self
+    where
+        T: Into<String>,
+    {
+        Self::Custom(name.into())
     }
+}
+
+/// Backend features
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Features {
+    /// Whether the database supports persistent storage.
+    pub persistent: bool,
+    /// Whether the database supports event expiration (NIP-40)
+    ///
+    /// When supported, the database will automatically exclude expired events
+    /// from query results and/or delete them.
+    ///
+    /// <https://github.com/nostr-protocol/nips/blob/master/40.md>
+    pub event_expiration: bool,
+    /// Whether the database supports full-text search (NIP-50)
+    ///
+    /// <https://github.com/nostr-protocol/nips/blob/master/50.md>
+    pub full_text_search: bool,
+    /// Whether the database supports the request to vanish (NIP-62)
+    ///
+    /// <https://github.com/nostr-protocol/nips/blob/master/62.md>
+    pub request_to_vanish: bool,
 }
 
 /// Database event status
@@ -90,6 +124,8 @@ pub enum RejectedReason {
     Replaced,
     /// Attempt to delete a non-owned event
     InvalidDelete,
+    /// The event author vanished before
+    Vanished,
     /// Other reason
     Other,
 }
@@ -145,6 +181,9 @@ pub trait NostrDatabase: Any + Debug + Send + Sync {
     /// Name of the backend database used
     fn backend(&self) -> Backend;
 
+    /// Get backend features
+    fn features(&self) -> Features;
+
     /// Save [`Event`] into store
     ///
     /// **This method assumes that [`Event`] was already verified**
@@ -191,19 +230,4 @@ pub trait NostrDatabase: Any + Debug + Send + Sync {
 
     /// Wipe all data
     fn wipe(&self) -> BoxedFuture<Result<(), DatabaseError>>;
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_backend_is_persistent() {
-        assert!(!Backend::Memory.is_persistent());
-        assert!(Backend::RocksDB.is_persistent());
-        assert!(Backend::LMDB.is_persistent());
-        assert!(Backend::SQLite.is_persistent());
-        assert!(Backend::IndexedDB.is_persistent());
-        assert!(Backend::Custom("custom".to_string()).is_persistent());
-    }
 }

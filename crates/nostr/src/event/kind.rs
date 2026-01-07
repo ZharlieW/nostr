@@ -11,7 +11,7 @@ use core::num::ParseIntError;
 use core::ops::{Add, Range};
 use core::str::FromStr;
 
-use serde::de::{Deserialize, Deserializer, Error, Visitor};
+use serde::de::{Deserialize, Deserializer};
 use serde::ser::{Serialize, Serializer};
 
 /// NIP90 - Job request range
@@ -97,6 +97,8 @@ kind_variants! {
     MlsGroupMessage => 445, "MLS Group Message", "<https://github.com/nostr-protocol/nips/blob/master/104.md>",
     RepoState => 30618, "Repository state announcements", "<https://github.com/nostr-protocol/nips/blob/master/34.md>",
     GitPatch => 1617, "Git Patch", "<https://github.com/nostr-protocol/nips/blob/master/34.md>",
+    GitPullRequest => 1618, "Git Pull Request", "<https://github.com/nostr-protocol/nips/blob/master/34.md>",
+    GitPullRequestUpdate => 1619, "Git Pull Request Update", "<https://github.com/nostr-protocol/nips/blob/master/34.md>",
     GitIssue => 1621, "Git Issue", "<https://github.com/nostr-protocol/nips/blob/master/34.md>",
     GitReply => 1622, "Git Reply", "<https://github.com/nostr-protocol/nips/blob/master/34.md>",
     GitStatusOpen => 1630, "Open Status of Git Patch or Issue", "<https://github.com/nostr-protocol/nips/blob/master/34.md>",
@@ -106,11 +108,13 @@ kind_variants! {
     WalletConnectInfo => 13194, "Wallet Service Info", "<https://github.com/nostr-protocol/nips/blob/master/47.md>",
     Reporting => 1984, "Reporting", "<https://github.com/nostr-protocol/nips/blob/master/56.md>",
     Label => 1985, "Label", "<https://github.com/nostr-protocol/nips/blob/master/32.md>",
-    ZapPrivateMessage => 9733, "Zap Private Message ", "<https://github.com/nostr-protocol/nips/blob/master/57.md>",
-    ZapRequest => 9734, "Zap Request ", "<https://github.com/nostr-protocol/nips/blob/master/57.md>",
-    ZapReceipt => 9735, "Zap Receipt ", "<https://github.com/nostr-protocol/nips/blob/master/57.md>",
+    ZapPrivateMessage => 9733, "Zap Private Message", "<https://github.com/nostr-protocol/nips/blob/master/57.md>",
+    ZapRequest => 9734, "Zap Request", "<https://github.com/nostr-protocol/nips/blob/master/57.md>",
+    ZapReceipt => 9735, "Zap Receipt", "<https://github.com/nostr-protocol/nips/blob/master/57.md>",
+    Highlight => 9802, "Highlights", "<https://github.com/nostr-protocol/nips/blob/master/84.md>",
     MuteList => 10000, "Mute List", "<https://github.com/nostr-protocol/nips/blob/master/51.md>",
     PinList => 10001, "Pin List", "<https://github.com/nostr-protocol/nips/blob/master/51.md>",
+    RelayList => 10002, "Relay List Metadata", "<https://github.com/nostr-protocol/nips/blob/master/65.md>",
     Bookmarks => 10003, "Bookmarks", "<https://github.com/nostr-protocol/nips/blob/master/51.md>",
     Communities => 10004, "Communities", "<https://github.com/nostr-protocol/nips/blob/master/51.md>",
     PublicChats => 10005, "Public Chats", "<https://github.com/nostr-protocol/nips/blob/master/51.md>",
@@ -121,7 +125,7 @@ kind_variants! {
     Emojis => 10030, "Emojis", "<https://github.com/nostr-protocol/nips/blob/master/51.md>",
     InboxRelays => 10050, "Inbox Relays", "<https://github.com/nostr-protocol/nips/blob/master/17.md>",
     MlsKeyPackageRelays => 10051, "MLS Key Package Relays", "<https://github.com/nostr-protocol/nips/blob/master/104.md>",
-    RelayList => 10002, "Relay List Metadata", "<https://github.com/nostr-protocol/nips/blob/master/65.md>",
+    BlossomServerList => 10063, "Blossom Server List", "<https://github.com/nostr-protocol/nips/blob/master/B7.md>",
     Authentication => 22242, "Client Authentication", "<https://github.com/nostr-protocol/nips/blob/master/42.md>",
     WalletConnectRequest => 23194, "Wallet Connect Request", "<https://github.com/nostr-protocol/nips/blob/master/47.md>",
     WalletConnectResponse => 23195, "Wallet Connect Response", "<https://github.com/nostr-protocol/nips/blob/master/47.md>",
@@ -163,6 +167,7 @@ kind_variants! {
     CashuWalletSpendingHistory => 7376, "Cashu Wallet Spending History", "<https://github.com/nostr-protocol/nips/blob/master/60.md>",
     CashuWalletQuote => 7374, "Cashu Wallet Redeeming a quote", "<https://github.com/nostr-protocol/nips/blob/master/60.md>",
     CashuNutZapInfo => 10019, "Cashu Nut Zap informational event", "<https://github.com/nostr-protocol/nips/blob/master/61.md>",
+    GitUserGraspList => 10317, "User Grasp List", "<https://github.com/nostr-protocol/nips/blob/master/34.md>",
     CashuNutZap => 9321, "Cashu Nut Zap", "<https://github.com/nostr-protocol/nips/blob/master/61.md>",
     CodeSnippet => 1337, "Code Snippets", "<https://github.com/nostr-protocol/nips/blob/master/C0.md>",
     Poll => 1068, "Poll", "<https://github.com/nostr-protocol/nips/blob/master/88.md>",
@@ -299,12 +304,14 @@ impl From<Kind> for u16 {
     }
 }
 
+// Currently, this is needed for NIP-90
 impl Add<u16> for Kind {
     type Output = Self;
 
     fn add(self, rhs: u16) -> Self::Output {
         let kind: u16 = self.as_u16();
-        Kind::from_u16(kind + rhs)
+        let sum: u16 = kind.saturating_add(rhs);
+        Kind::from_u16(sum)
     }
 }
 
@@ -322,37 +329,19 @@ impl<'de> Deserialize<'de> for Kind {
     where
         D: Deserializer<'de>,
     {
-        deserializer.deserialize_u16(KindVisitor)
-    }
-}
-
-struct KindVisitor;
-
-impl Visitor<'_> for KindVisitor {
-    type Value = Kind;
-
-    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "a 16-bit unsigned number (0-65535)")
-    }
-
-    fn visit_u16<E>(self, v: u16) -> Result<Self::Value, E>
-    where
-        E: Error,
-    {
-        Ok(Self::Value::from_u16(v))
-    }
-
-    fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
-    where
-        E: Error,
-    {
-        Ok(Self::Value::from_u16(v as u16))
+        let kind: u16 = Deserialize::deserialize(deserializer)?;
+        Ok(Self::from_u16(kind))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Serialize, Deserialize)]
+    struct TestKind {
+        kind: Kind,
+    }
 
     #[test]
     fn test_equal_kind() {
@@ -373,6 +362,57 @@ mod tests {
     fn test_kind_is_addressable() {
         assert!(Kind::Custom(32122).is_addressable());
         assert!(!Kind::TextNote.is_addressable());
+    }
+
+    #[test]
+    fn test_kind_from_str() {
+        assert_eq!(Kind::from_str("0").unwrap(), Kind::Metadata);
+        assert_eq!(Kind::from_str("1").unwrap(), Kind::TextNote);
+        assert_eq!(Kind::from_str("1621").unwrap(), Kind::Custom(1621));
+        assert_eq!(Kind::from_str("20100").unwrap(), Kind::Custom(20100));
+    }
+
+    #[test]
+    fn test_kind_deserialize() {
+        let json: &str = r#"{"kind": 1621}"#;
+        let TestKind { kind } = serde_json::from_str(json).unwrap();
+
+        assert_eq!(kind, Kind::Custom(1621));
+    }
+
+    #[test]
+    fn test_kind_serialize() {
+        let kind = TestKind {
+            kind: Kind::Metadata,
+        };
+        let json = serde_json::to_string(&kind).unwrap();
+        let expected_json: &str = r#"{"kind":0}"#;
+
+        assert_eq!(json, expected_json);
+    }
+
+    #[test]
+    fn test_kind_serialize_deserialize_round_trip() {
+        let kind = Kind::Custom(20100);
+        let json = serde_json::to_string(&kind).unwrap();
+        let deserialized_kind: Kind = serde_json::from_str(&json).unwrap();
+        assert_eq!(kind, deserialized_kind);
+    }
+
+    #[test]
+    fn test_kind_add() {
+        let kind = Kind::TextNote + 100;
+        assert_eq!(kind, Kind::Custom(101));
+
+        let kind = Kind::Custom(20100) + 100;
+        assert_eq!(kind, Kind::Custom(20200));
+    }
+
+    #[test]
+    fn test_kind_add_overflow() {
+        // MUST NOT overflow
+        let kind = Kind::Custom(u16::MAX - 1) + 10;
+        assert_eq!(kind, Kind::Custom(u16::MAX));
     }
 }
 

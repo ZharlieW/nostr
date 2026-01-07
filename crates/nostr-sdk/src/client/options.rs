@@ -10,6 +10,7 @@ use std::net::SocketAddr;
 use std::path::Path;
 use std::time::Duration;
 
+use nostr_gossip::GossipAllowedRelays;
 use nostr_relay_pool::prelude::*;
 
 /// Max number of relays to use for gossip
@@ -44,6 +45,8 @@ impl Default for GossipRelayLimits {
 pub struct GossipOptions {
     /// Max number of relays to use
     pub limits: GossipRelayLimits,
+    /// Allowed relay during selection
+    pub allowed: GossipAllowedRelays,
 }
 
 impl GossipOptions {
@@ -53,12 +56,18 @@ impl GossipOptions {
         self.limits = limits;
         self
     }
+
+    /// Set allowed
+    #[inline]
+    pub fn allowed(mut self, allowed: GossipAllowedRelays) -> Self {
+        self.allowed = allowed;
+        self
+    }
 }
 
 /// Options
 #[derive(Debug, Clone, Default)]
 pub struct ClientOptions {
-    pub(super) autoconnect: bool,
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) connection: Connection,
     pub(super) relay_limits: RelayLimits,
@@ -75,15 +84,6 @@ impl ClientOptions {
     #[inline]
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Automatically start connection with relays (default: false)
-    ///
-    /// When set to `true`, there isn't the need of calling the connect methods.
-    #[inline]
-    pub fn autoconnect(mut self, val: bool) -> Self {
-        self.autoconnect = val;
-        self
     }
 
     /// Auto authenticate to relays (default: true)

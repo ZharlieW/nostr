@@ -16,7 +16,9 @@ use crate::event::unsigned::UnsignedEvent;
 use crate::event::{self, Event};
 use crate::signer::SignerError;
 #[cfg(feature = "std")]
-use crate::{EventBuilder, Timestamp, SECP256K1};
+use crate::SECP256K1;
+#[cfg(all(feature = "std", feature = "os-rng"))]
+use crate::{EventBuilder, Timestamp};
 use crate::{JsonUtil, Kind, NostrSigner, PublicKey};
 
 /// Range for random timestamp tweak (up to 2 days)
@@ -80,7 +82,7 @@ impl UnwrappedGift {
     where
         T: NostrSigner,
     {
-        Self::from_gift_wrap_with_ctx(SECP256K1, signer, gift_wrap).await
+        Self::from_gift_wrap_with_ctx(&SECP256K1, signer, gift_wrap).await
     }
 
     /// Unwrap Gift Wrap event
@@ -136,7 +138,7 @@ where
 /// Make a seal
 ///
 /// The `rumor` can be an [`EventBuilder`] or an [`UnsignedEvent`].
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "os-rng"))]
 pub async fn make_seal<T>(
     signer: &T,
     receiver_pubkey: &PublicKey,
@@ -164,8 +166,8 @@ where
         .custom_created_at(Timestamp::tweaked(RANGE_RANDOM_TIMESTAMP_TWEAK)))
 }
 
-#[cfg(feature = "std")]
 #[cfg(test)]
+#[cfg(all(feature = "std", feature = "os-rng"))]
 mod tests {
     use super::*;
     use crate::{EventBuilder, Keys};

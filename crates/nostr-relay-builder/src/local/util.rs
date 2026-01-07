@@ -4,14 +4,14 @@
 
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
-use nostr::secp256k1::rand::rngs::OsRng;
-use nostr::secp256k1::rand::Rng;
+use nostr::rand::rngs::OsRng;
+use nostr::rand::{Rng, TryRngCore};
 use tokio::net::TcpListener;
 
 pub async fn find_available_port() -> u16 {
-    let mut rng: OsRng = OsRng;
+    let mut rng = OsRng.unwrap_err();
     loop {
-        let port: u16 = rng.gen_range(1024..=u16::MAX);
+        let port: u16 = rng.random_range(1024..=u16::MAX);
         if port_is_available(port).await {
             return port;
         }

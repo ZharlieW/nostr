@@ -59,26 +59,6 @@ fn main() -> Result<()> {
 
 More examples can be found in the [examples/](https://github.com/rust-nostr/nostr/tree/master/crates/nostr/examples) directory.
 
-## WASM
-
-This crate supports the `wasm32` targets.
-
-On macOS you need to install `llvm`:
-
-```shell
-brew install llvm
-LLVM_PATH=$(brew --prefix llvm)
-AR="${LLVM_PATH}/bin/llvm-ar" CC="${LLVM_PATH}/bin/clang" cargo build --target wasm32-unknown-unknown
-```
-
-NOTE: Currently `nip03` feature not support WASM.
-
-## Embedded
-
-This crate support [`no_std`](https://docs.rust-embedded.org/book/intro/no-std.html) environments.
-
-Check the example in the [embedded/](https://github.com/rust-nostr/nostr/tree/master/crates/nostr/examples/embedded) directory.
-
 ## Crate Feature Flags
 
 The following crate feature flags are available:
@@ -87,6 +67,8 @@ The following crate feature flags are available:
 |--------------------|:-------:|---------------------------------------------------------------|
 | `std`              |   Yes   | Enable `std` library                                          |
 | `alloc`            |   No    | Needed to use this library in `no_std` context                |
+| `rand`             |   No    | Enables `rand` traits                                         |
+| `os-rng`           |   No    | Enable OS Random Number Generator                             |
 | `pow-multi-thread` |   No    | Enable event POW mining using multi-threads                   |
 | `all-nips`         |   No    | Enable all NIPs                                               |
 | `nip03`            |   No    | Enable NIP-03: OpenTimestamps Attestations for Events         |
@@ -99,6 +81,74 @@ The following crate feature flags are available:
 | `nip57`            |   No    | Enable NIP-57: Zaps                                           |
 | `nip59`            |   No    | Enable NIP-59: Gift Wrap                                      |
 | `nip60`            |   No    | Enable NIP-60: Cashu Wallets                                  |
+
+## WASM
+
+This crate supports the `wasm32-unknown-unknown` and `wasm32-wasip2` targets. 
+The other WASM targets may be supported bur are not tested.
+
+### wasm32-wasip2
+
+To compile for `wasm32-wasip2` you need to:
+
+- Download the WASI SDK from <https://github.com/WebAssembly/wasi-sdk>
+- Extract it and set the `WASI_SDK` environment variable
+- Set the `CC_wasm32_wasip2="$WASI_SDK/bin/clang"`, `AR_wasm32_wasip2="$WASI_SDK/bin/llvm-ar"` and `CFLAGS_wasm32_wasip2="--sysroot=$WASI_SDK/share/wasi-sysroot"` environment variables
+- Build!
+
+**Example (note, links and version may be outdated):**
+
+```bash
+# 1. Download and extract the WASI SDK
+wget https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-29/wasi-sdk-29.0-x86_64-linux.tar.gz
+tar xvf wasi-sdk-29.0-x86_64-linux.tar.gz
+
+# 2. Set the path variable (adjust if you extracted it somewhere else)
+export WASI_SDK="$(pwd)/wasi-sdk-29.0-x86_64-linux"
+
+# 3. Export the environment variables that the 'cc' crate looks for
+# This tells the build script specifically which compiler to use for this target
+export CC_wasm32_wasip2="$WASI_SDK/bin/clang"
+export AR_wasm32_wasip2="$WASI_SDK/bin/llvm-ar"
+export CFLAGS_wasm32_wasip2="--sysroot=$WASI_SDK/share/wasi-sysroot"
+
+# 4. Now run your build command
+cargo build --target wasm32-wasip2
+```
+
+### wasm32-unknown-unknown
+
+On **macOS** you need to install `llvm`:
+
+```shell
+brew install llvm
+LLVM_PATH=$(brew --prefix llvm)
+AR="${LLVM_PATH}/bin/llvm-ar" CC="${LLVM_PATH}/bin/clang" cargo build --target wasm32-unknown-unknown
+```
+
+The other platforms should work out of the box.
+
+#### Compiling for a JavaScript environment
+
+If you intend to use this crate **inside a JS runtime** (i.e., browser or Node.js),
+make sure to enable the appropriate features in your own project’s `.cargo/config.toml` and `Cargo.toml` files:
+
+```toml
+# .cargo/config.toml
+[target.wasm32-unknown-unknown]
+rustflags = ['--cfg', 'getrandom_backend="wasm_js"']
+```
+
+```toml
+# Cargo.toml
+instant = { version = "*", features = ["wasm-bindgen"] }
+```
+
+## Embedded
+
+This crate support [`no_std`](https://docs.rust-embedded.org/book/intro/no-std.html) environments.
+
+Check the example in the [embedded/](https://github.com/rust-nostr/nostr/tree/master/crates/nostr/examples/embedded) directory.
 
 ## Changelog
 

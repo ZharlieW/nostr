@@ -25,14 +25,47 @@
 
 ## Unreleased
 
+### Breaking changes
+
+- Change the output and behavior of nip17::extract_relay_list and nip17::extract_owned_relay_list functions
+- Add `rand` feature (https://github.com/rust-nostr/nostr/pull/1167)
+- Add `os-rng` feature (https://github.com/rust-nostr/nostr/pull/1171)
+
 ### Changed
 
+- Bump `rand` from 0.8 to 0.9 (https://github.com/rust-nostr/nostr/pull/1171)
+- Rename `NostrConnectURI` to `NostrConnectUri`
+- Rename `NostrWalletConnectURI` to `NostrWalletConnectUri`
+- Prevent overflow in `Kind` addition
+- Refinements for `wasm32` targets (https://github.com/rust-nostr/nostr/pull/1164 and https://github.com/rust-nostr/nostr/pull/1167)
 - Make `Kind::from_u16` and `Kind::as_u16` const (https://github.com/rust-nostr/nostr/pull/1136)
 
 ### Added
 
 - Impl `TryFrom<i64>` for `Timestamp`
-- Add `RelayUrlScheme` enum and `RelayUrl::scheme` method (https://github.com/rust-nostr/nostr/pull/1127) 
+- Add `EventBuilder::git_pull_request`, `EventBuilder::git_pull_request_update` and `EventBuilder::git_user_grasp_list` (https://gitworkshop.dev/yukikishimoto.com/nostr/prs/note1jwe7k8fuynzze6w8pfxp2zkfehk9cteuuxuamvjkavefxq9a7m7qffreyq)
+- Add `RelayUrlScheme` enum and `RelayUrl::scheme` method (https://github.com/rust-nostr/nostr/pull/1127)
+- Add `Method::Unknown` variant (https://github.com/rust-nostr/nostr/pull/1162)
+- Add `Kind::Highlight` variant (https://github.com/rust-nostr/nostr/pull/1191)
+- Implement `fmt::Display` for `CoordinateBorrow` (https://github.com/rust-nostr/nostr/pull/1194)
+- Add `Kind::BlossomServerList` variant (https://github.com/rust-nostr/nostr/pull/1195)
+- Add `EventBuilder::blossom_server_list` function (https://github.com/rust-nostr/nostr/pull/1195)
+
+### Removed
+
+- Remove unnecessary `#[cfg(feature = "std")]` from `UnsignedEvent::sign` method
+- Remove `url-fork` dependency (https://github.com/rust-nostr/nostr/pull/1179)
+
+### Fixed
+
+- Remove unused generic in `EventBuilder::request_vanish` function (https://github.com/rust-nostr/nostr/pull/1181)
+- Add `a` tag of replaceable and addressable events in `EventBuilder::repost` (https://github.com/rust-nostr/nostr/pull/1184)
+
+## v0.44.2 - 2025/12/04
+
+### Fixed
+
+- Fix parsing of e tag with blank values (https://github.com/rust-nostr/nostr/pull/1158)
 
 ## v0.44.1 - 2025/11/09
 

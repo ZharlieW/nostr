@@ -9,7 +9,10 @@
 use alloc::borrow::Cow;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use core::cmp::Ordering;
+use core::convert::Infallible;
 use core::fmt;
+use core::hash::{Hash, Hasher};
 use core::str::FromStr;
 
 use serde::ser::{SerializeMap, SerializeStruct};
@@ -17,11 +20,13 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
 use super::nip04;
+#[cfg(feature = "std")]
+use crate::event;
 use crate::types::url::form_urlencoded::byte_serialize;
 use crate::types::url::{RelayUrl, Url};
-#[cfg(feature = "std")]
-use crate::{event, EventBuilder, Keys, Kind, Tag};
 use crate::{Event, JsonUtil, PublicKey, SecretKey, Timestamp};
+#[cfg(all(feature = "std", feature = "os-rng"))]
+use crate::{EventBuilder, Keys, Kind, Tag};
 
 /// NIP47 error
 #[derive(Debug)]
@@ -42,10 +47,10 @@ pub enum Error {
         /// Deserialization error
         error: String,
     },
+    /// Unsupported method
+    UnsupportedMethod(Method),
     /// Unexpected result
     UnexpectedResult,
-    /// Unknown method
-    UnknownMethod,
     /// Invalid URI
     InvalidURI,
 }
@@ -65,8 +70,8 @@ impl fmt::Display for Error {
                 f,
                 "Can't deserialize response: response={response}, error={error}"
             ),
+            Self::UnsupportedMethod(name) => write!(f, "Unsupported method: {name}"),
             Self::UnexpectedResult => f.write_str("Unexpected result"),
-            Self::UnknownMethod => f.write_str("Unknown method"),
             Self::InvalidURI => f.write_str("Invalid URI"),
         }
     }
@@ -142,7 +147,7 @@ impl fmt::Display for NIP47Error {
 }
 
 /// Method
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone)]
 pub enum Method {
     /// Pay Invoice
     PayInvoice,
@@ -168,11 +173,39 @@ pub enum Method {
     CancelHoldInvoice,
     /// Settle Hold Invoice
     SettleHoldInvoice,
+    /// Unknown method
+    Unknown(String),
 }
 
 impl fmt::Display for Method {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.as_str())
+    }
+}
+
+impl PartialEq for Method {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl Eq for Method {}
+
+impl PartialOrd for Method {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Method {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.as_str().cmp(other.as_str())
+    }
+}
+
+impl Hash for Method {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.as_str().hash(state)
     }
 }
 
@@ -192,12 +225,13 @@ impl Method {
             Self::MakeHoldInvoice => "make_hold_invoice",
             Self::CancelHoldInvoice => "cancel_hold_invoice",
             Self::SettleHoldInvoice => "settle_hold_invoice",
+            Self::Unknown(method) => method.as_str(),
         }
     }
 }
 
 impl FromStr for Method {
-    type Err = Error;
+    type Err = Infallible;
 
     fn from_str(method: &str) -> Result<Self, Self::Err> {
         match method {
@@ -213,7 +247,7 @@ impl FromStr for Method {
             "make_hold_invoice" => Ok(Self::MakeHoldInvoice),
             "cancel_hold_invoice" => Ok(Self::CancelHoldInvoice),
             "settle_hold_invoice" => Ok(Self::SettleHoldInvoice),
-            _ => Err(Error::UnknownMethod),
+            m => Ok(Self::Unknown(m.to_string())),
         }
     }
 }
@@ -617,6 +651,9 @@ impl Request {
                 let params: CancelHoldInvoiceRequest = serde_json::from_value(template.params)?;
                 RequestParams::CancelHoldInvoice(params)
             }
+            Method::Unknown(name) => {
+                return Err(Error::UnsupportedMethod(Method::Unknown(name)));
+            }
         };
 
         Ok(Self {
@@ -626,8 +663,8 @@ impl Request {
     }
 
     /// Create request [Event]
-    #[cfg(feature = "std")]
-    pub fn to_event(self, uri: &NostrWalletConnectURI) -> Result<Event, Error> {
+    #[cfg(all(feature = "std", feature = "os-rng"))]
+    pub fn to_event(self, uri: &NostrWalletConnectUri) -> Result<Event, Error> {
         let encrypted = nip04::encrypt(&uri.secret, &uri.public_key, self.as_json())?;
         let keys: Keys = Keys::new(uri.secret.clone());
         Ok(EventBuilder::new(Kind::WalletConnectRequest, encrypted)
@@ -929,7 +966,7 @@ struct ResponseTemplate {
 impl Response {
     /// Deserialize from [Event]
     #[inline]
-    pub fn from_event(uri: &NostrWalletConnectURI, event: &Event) -> Result<Self, Error> {
+    pub fn from_event(uri: &NostrWalletConnectUri, event: &Event) -> Result<Self, Error> {
         let decrypt_res: String = nip04::decrypt(&uri.secret, &event.pubkey, &event.content)?;
         Self::from_json(&decrypt_res).map_err(|e| Error::CantDeserializeResponse {
             response: decrypt_res,
@@ -994,6 +1031,9 @@ impl Response {
                 Method::SettleHoldInvoice => {
                     let result: SettleHoldInvoiceResponse = serde_json::from_value(result)?;
                     ResponseResult::SettleHoldInvoice(result)
+                }
+                Method::Unknown(name) => {
+                    return Err(Error::UnsupportedMethod(Method::Unknown(name)));
                 }
             };
 
@@ -1128,9 +1168,13 @@ where
 /// NIP47 URI Scheme
 pub const NOSTR_WALLET_CONNECT_URI_SCHEME: &str = "nostr+walletconnect";
 
+#[allow(missing_docs)]
+#[deprecated(since = "0.45.0", note = "Use NostrWalletConnectUri instead")]
+pub type NostrWalletConnectURI = NostrWalletConnectUri;
+
 /// Nostr Connect URI
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct NostrWalletConnectURI {
+pub struct NostrWalletConnectUri {
     /// App Pubkey
     pub public_key: PublicKey,
     /// URL of the relay of choice where the `App` is connected and the `Signer` must send and listen for messages.
@@ -1141,8 +1185,8 @@ pub struct NostrWalletConnectURI {
     pub lud16: Option<String>,
 }
 
-impl NostrWalletConnectURI {
-    /// Create new [`NostrWalletConnectURI`]
+impl NostrWalletConnectUri {
+    /// Create a new URI
     #[inline]
     pub fn new(
         public_key: PublicKey,
@@ -1208,7 +1252,7 @@ impl NostrWalletConnectURI {
     }
 }
 
-impl FromStr for NostrWalletConnectURI {
+impl FromStr for NostrWalletConnectUri {
     type Err = Error;
 
     fn from_str(uri: &str) -> Result<Self, Self::Err> {
@@ -1216,7 +1260,7 @@ impl FromStr for NostrWalletConnectURI {
     }
 }
 
-impl fmt::Display for NostrWalletConnectURI {
+impl fmt::Display for NostrWalletConnectUri {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut relays_str: String = String::new();
 
@@ -1241,7 +1285,7 @@ impl fmt::Display for NostrWalletConnectURI {
     }
 }
 
-impl Serialize for NostrWalletConnectURI {
+impl Serialize for NostrWalletConnectUri {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -1250,13 +1294,13 @@ impl Serialize for NostrWalletConnectURI {
     }
 }
 
-impl<'a> Deserialize<'a> for NostrWalletConnectURI {
+impl<'a> Deserialize<'a> for NostrWalletConnectUri {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'a>,
     {
-        let uri = String::deserialize(deserializer)?;
-        NostrWalletConnectURI::from_str(&uri).map_err(serde::de::Error::custom)
+        let uri: String = String::deserialize(deserializer)?;
+        Self::from_str(&uri).map_err(serde::de::Error::custom)
     }
 }
 
@@ -1318,7 +1362,7 @@ pub struct NotificationTemplate {
 impl Notification {
     /// Deserialize from [Event]
     #[inline]
-    pub fn from_event(uri: &NostrWalletConnectURI, event: &Event) -> Result<Self, Error> {
+    pub fn from_event(uri: &NostrWalletConnectUri, event: &Event) -> Result<Self, Error> {
         let decrypt_res: String = nip04::decrypt(&uri.secret, &event.pubkey, &event.content)?;
         Self::from_json(decrypt_res)
     }
@@ -1507,6 +1551,67 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_method_eq() {
+        assert_eq!(Method::GetBalance, Method::GetBalance);
+
+        assert_eq!(
+            Method::PayInvoice,
+            Method::Unknown(String::from("pay_invoice"))
+        );
+        assert_eq!(
+            Method::MultiPayInvoice,
+            Method::Unknown(String::from("multi_pay_invoice"))
+        );
+        assert_eq!(
+            Method::PayKeysend,
+            Method::Unknown(String::from("pay_keysend"))
+        );
+        assert_eq!(
+            Method::MultiPayKeysend,
+            Method::Unknown(String::from("multi_pay_keysend"))
+        );
+        assert_eq!(
+            Method::MakeInvoice,
+            Method::Unknown(String::from("make_invoice"))
+        );
+        assert_eq!(
+            Method::LookupInvoice,
+            Method::Unknown(String::from("lookup_invoice"))
+        );
+        assert_eq!(
+            Method::ListTransactions,
+            Method::Unknown(String::from("list_transactions"))
+        );
+        assert_eq!(
+            Method::GetBalance,
+            Method::Unknown(String::from("get_balance"))
+        );
+        assert_eq!(Method::GetInfo, Method::Unknown(String::from("get_info")));
+        assert_eq!(
+            Method::MakeHoldInvoice,
+            Method::Unknown(String::from("make_hold_invoice"))
+        );
+        assert_eq!(
+            Method::CancelHoldInvoice,
+            Method::Unknown(String::from("cancel_hold_invoice"))
+        );
+        assert_eq!(
+            Method::SettleHoldInvoice,
+            Method::Unknown(String::from("settle_hold_invoice"))
+        );
+        assert_eq!(
+            Method::Unknown(String::from("unknown_method")),
+            Method::Unknown(String::from("unknown_method"))
+        );
+    }
+
+    #[test]
+    fn test_method_ne() {
+        assert_ne!(Method::GetBalance, Method::GetInfo);
+        assert_ne!(Method::GetInfo, Method::Unknown(String::from("test")));
+    }
+
+    #[test]
     fn test_uri() {
         let pubkey =
             PublicKey::from_str("b889ff5b1513b641e2a139f661a661364979c5beee91842f8f0ef42ab558e9d4")
@@ -1515,7 +1620,7 @@ mod tests {
         let secret =
             SecretKey::from_str("71a8c14c1407c113601079c4302dab36460f0ccd0ad506f1f2dc73b5100e4f3c")
                 .unwrap();
-        let uri = NostrWalletConnectURI::new(
+        let uri = NostrWalletConnectUri::new(
             pubkey,
             vec![relay_url],
             secret,
@@ -1530,7 +1635,7 @@ mod tests {
     #[test]
     fn test_parse_uri() {
         let uri = "nostr+walletconnect://b889ff5b1513b641e2a139f661a661364979c5beee91842f8f0ef42ab558e9d4?secret=71a8c14c1407c113601079c4302dab36460f0ccd0ad506f1f2dc73b5100e4f3c&relay=wss%3A%2F%2Frelay.damus.io&lud16=nostr%40nostr.com";
-        let uri = NostrWalletConnectURI::from_str(uri).unwrap();
+        let uri = NostrWalletConnectUri::from_str(uri).unwrap();
 
         let pubkey =
             PublicKey::from_str("b889ff5b1513b641e2a139f661a661364979c5beee91842f8f0ef42ab558e9d4")
@@ -1541,7 +1646,7 @@ mod tests {
                 .unwrap();
         assert_eq!(
             uri,
-            NostrWalletConnectURI::new(
+            NostrWalletConnectUri::new(
                 pubkey,
                 vec![relay_url],
                 secret,

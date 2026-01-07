@@ -14,6 +14,9 @@ use async_wsocket::native::{self, Message, WebSocketStream};
 use atomic_destructor::AtomicDestroyer;
 use negentropy::{Id, Negentropy, NegentropyStorageVector};
 use nostr_database::prelude::*;
+use nostr_relay_pool::{
+    pool, Output, Reconciliation, RelayOptions, RelayPool, RelayPoolNotification, SyncOptions,
+};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, Notify, OnceCell, Semaphore};
@@ -21,10 +24,10 @@ use tokio::sync::{broadcast, Notify, OnceCell, Semaphore};
 use super::session::{Nip42Session, RateLimiterResponse, Session, Tokens};
 use super::util;
 #[cfg(feature = "tor")]
-use crate::builder::RelayBuilderHiddenService;
+use crate::builder::LocalRelayBuilderHiddenService;
 use crate::builder::{
-    PolicyResult, QueryPolicy, RateLimit, RelayBuilder, RelayBuilderMode, RelayBuilderNip42,
-    RelayTestOptions, WritePolicy,
+    LocalRelayBuilder, LocalRelayBuilderMode, LocalRelayBuilderNip42, LocalRelayTestOptions,
+    QueryPolicy, QueryPolicyResult, RateLimit, WritePolicy, WritePolicyResult,
 };
 use crate::error::Error;
 
@@ -41,7 +44,7 @@ pub(super) struct InnerLocalRelay {
     ///
     /// Every session will listen and check own subscriptions
     new_event: broadcast::Sender<Event>,
-    mode: RelayBuilderMode,
+    mode: LocalRelayBuilderMode,
     rate_limit: RateLimit,
     connections_limit: Arc<Semaphore>,
     max_subid_length: usize,
@@ -50,13 +53,13 @@ pub(super) struct InnerLocalRelay {
     auth_dm: bool,
     min_pow: Option<u8>, // TODO: use AtomicU8 to allow to change it?
     #[cfg(feature = "tor")]
-    tor: Option<RelayBuilderHiddenService>,
+    tor: Option<LocalRelayBuilderHiddenService>,
     #[cfg(feature = "tor")]
     hidden_service: OnceCell<Option<String>>,
-    write_policy: Vec<Arc<dyn WritePolicy>>,
-    query_policy: Vec<Arc<dyn QueryPolicy>>,
-    nip42: Option<RelayBuilderNip42>,
-    test: RelayTestOptions,
+    write_policy: Option<Arc<dyn WritePolicy>>,
+    query_policy: Option<Arc<dyn QueryPolicy>>,
+    nip42: Option<LocalRelayBuilderNip42>,
+    test: LocalRelayTestOptions,
     running: Arc<AtomicBool>,
 }
 
@@ -67,7 +70,7 @@ impl AtomicDestroyer for InnerLocalRelay {
 }
 
 impl InnerLocalRelay {
-    pub fn new(builder: RelayBuilder) -> Self {
+    pub fn new(builder: LocalRelayBuilder) -> Self {
         // TODO: check if configured memory database with events option disabled
 
         // Get IP
@@ -103,8 +106,8 @@ impl InnerLocalRelay {
             tor: builder.tor,
             #[cfg(feature = "tor")]
             hidden_service: OnceCell::new(),
-            write_policy: builder.write_plugins,
-            query_policy: builder.query_plugins,
+            write_policy: builder.write_policy,
+            query_policy: builder.query_policy,
             nip42: builder.nip42,
             test: builder.test,
             running: Arc::new(AtomicBool::new(false)),
@@ -194,6 +197,54 @@ impl InnerLocalRelay {
                 }
             })
             .await
+    }
+
+    pub(super) async fn sync_with<I, U>(
+        &self,
+        urls: I,
+        filter: Filter,
+        opts: &SyncOptions,
+    ) -> Result<Output<Reconciliation>, Error>
+    where
+        I: IntoIterator<Item = U>,
+        U: TryIntoUrl,
+        pool::Error: From<<U as TryIntoUrl>::Err>,
+    {
+        // Construct a new pool
+        let pool: RelayPool = RelayPool::default();
+
+        // Add relays to pool
+        for url in urls {
+            pool.add_relay(url, RelayOptions::default()).await?;
+        }
+
+        // Connect
+        pool.connect().await;
+
+        // Subscribe to notifications
+        let mut notifications = pool.notifications();
+
+        // Create a notification future
+        let fut = async {
+            while let Ok(notification) = notifications.recv().await {
+                // Notify about new events received by the sync
+                if let RelayPoolNotification::Event { event, .. } = notification {
+                    self.notify_event(*event);
+                }
+            }
+        };
+
+        // Start sync and wait for the result
+        tokio::select! {
+            result = pool.sync(filter, opts) => {
+                // Shutdown pool
+                pool.shutdown().await;
+
+                // Return reconciliation output
+                Ok(result?)
+            },
+            _ = fut => Err(Error::PrematureExit)
+        }
     }
 
     pub fn notify_event(&self, event: Event) -> bool {
@@ -384,6 +435,22 @@ impl InnerLocalRelay {
                     .await;
                 }
 
+                // Check if the event is expired
+                if event.is_expired() {
+                    return send_msg(
+                        ws_tx,
+                        RelayMessage::Ok {
+                            event_id: event.id,
+                            status: false,
+                            message: Cow::Owned(format!(
+                                "{}: event is expired",
+                                MachineReadablePrefix::Blocked
+                            )),
+                        },
+                    )
+                    .await;
+                }
+
                 // Check POW
                 if let Some(difficulty) = self.min_pow {
                     if !event.id.check_pow(difficulty) {
@@ -472,26 +539,6 @@ impl InnerLocalRelay {
                     }
                 }
 
-                // check write policy
-                for policy in self.write_policy.iter() {
-                    let event_id = event.id;
-                    if let PolicyResult::Reject(m) = policy.admit_event(&event, addr).await {
-                        return send_msg(
-                            ws_tx,
-                            RelayMessage::Ok {
-                                event_id,
-                                status: false,
-                                message: Cow::Owned(format!(
-                                    "{}: {}",
-                                    MachineReadablePrefix::Blocked,
-                                    m
-                                )),
-                            },
-                        )
-                        .await;
-                    }
-                }
-
                 // Check if event already exists
                 let event_status = self.database.check_id(&event.id).await?;
                 match event_status {
@@ -527,7 +574,7 @@ impl InnerLocalRelay {
                 }
 
                 // Check mode
-                if let RelayBuilderMode::PublicKey(pk) = self.mode {
+                if let LocalRelayBuilderMode::PublicKey(pk) = self.mode {
                     let authored: bool = event.pubkey == pk;
                     let tagged: bool = event.tags.public_keys().any(|p| p == &pk);
 
@@ -541,6 +588,23 @@ impl InnerLocalRelay {
                                     "{}: event not related to owner of this relay",
                                     MachineReadablePrefix::Blocked
                                 )),
+                            },
+                        )
+                        .await;
+                    }
+                }
+
+                // Check write policy
+                if let Some(policy) = self.write_policy.as_ref() {
+                    if let WritePolicyResult::Reject { message, status } =
+                        policy.admit_event(&event, addr).await
+                    {
+                        return send_msg(
+                            ws_tx,
+                            RelayMessage::Ok {
+                                event_id: event.id,
+                                status,
+                                message,
                             },
                         )
                         .await;
@@ -869,19 +933,17 @@ impl InnerLocalRelay {
             }
         }
 
-        // check query policy plugins
-        for plugin in self.query_policy.iter() {
+        // Check query policy
+        if let Some(policy) = self.query_policy.as_ref() {
             for filter in filters.iter() {
-                if let PolicyResult::Reject(msg) = plugin.admit_query(filter, addr).await {
+                if let QueryPolicyResult::Reject { prefix, message } =
+                    policy.admit_query(filter, addr).await
+                {
                     return send_msg(
                         ws_tx,
                         RelayMessage::Closed {
                             subscription_id,
-                            message: Cow::Owned(format!(
-                                "{}: {}",
-                                MachineReadablePrefix::Error,
-                                msg
-                            )),
+                            message: Cow::Owned(format!("{prefix}: {message}",)),
                         },
                     )
                     .await;
@@ -928,13 +990,19 @@ impl InnerLocalRelay {
 
         let mut json_msgs: Vec<String> = Vec::with_capacity(events_len + 1);
 
+        let now = Timestamp::now();
         // Add events
-        json_msgs.extend(events.into_iter().map(|event| {
-            RelayMessage::Event {
-                subscription_id: Cow::Borrowed(subscription_id.as_ref()),
-                event: Cow::Owned(event),
+        json_msgs.extend(events.into_iter().filter_map(|event| {
+            if event.is_expired_at(&now) {
+                return None;
             }
-            .as_json()
+            Some(
+                RelayMessage::Event {
+                    subscription_id: Cow::Borrowed(subscription_id.as_ref()),
+                    event: Cow::Owned(event),
+                }
+                .as_json(),
+            )
         }));
 
         // Add EOSE message

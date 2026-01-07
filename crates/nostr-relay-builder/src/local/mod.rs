@@ -8,6 +8,7 @@ use std::net::SocketAddr;
 
 use atomic_destructor::AtomicDestructor;
 use nostr_database::prelude::*;
+use nostr_relay_pool::{pool, Output, Reconciliation, SyncOptions};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 mod inner;
@@ -15,7 +16,7 @@ mod session;
 mod util;
 
 use self::inner::InnerLocalRelay;
-use crate::builder::RelayBuilder;
+use crate::builder::LocalRelayBuilder;
 use crate::error::Error;
 
 /// A local nostr relay
@@ -26,10 +27,30 @@ pub struct LocalRelay {
     inner: AtomicDestructor<InnerLocalRelay>,
 }
 
-impl LocalRelay {
-    /// Create a new local relay
+impl Default for LocalRelay {
     #[inline]
-    pub fn new(builder: RelayBuilder) -> Self {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LocalRelay {
+    /// Create a new local relay with the default configuration.
+    ///
+    /// Use [`LocalRelay::builder`] for customizing it!
+    #[inline]
+    pub fn new() -> Self {
+        Self::builder().build()
+    }
+
+    /// Create a new local relay builder
+    #[inline]
+    pub fn builder() -> LocalRelayBuilder {
+        LocalRelayBuilder::default()
+    }
+
+    #[inline]
+    pub(super) fn from_builder(builder: LocalRelayBuilder) -> Self {
         Self {
             inner: AtomicDestructor::new(InnerLocalRelay::new(builder)),
         }
@@ -54,6 +75,22 @@ impl LocalRelay {
     pub async fn hidden_service(&self) -> Result<Option<&str>, Error> {
         let addr: &Option<String> = self.inner.hidden_service().await?;
         Ok(addr.as_deref())
+    }
+
+    /// Sync events with other relay(s).
+    #[inline]
+    pub async fn sync_with<I, U>(
+        &self,
+        urls: I,
+        filter: Filter,
+        opts: &SyncOptions,
+    ) -> Result<Output<Reconciliation>, Error>
+    where
+        I: IntoIterator<Item = U>,
+        U: TryIntoUrl,
+        pool::Error: From<<U as TryIntoUrl>::Err>,
+    {
+        self.inner.sync_with(urls, filter, opts).await
     }
 
     /// Send event to subscribers

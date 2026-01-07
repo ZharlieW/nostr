@@ -8,10 +8,12 @@ members = [
     "database/nostr-indexeddb",
     "database/nostr-lmdb",
     "database/nostr-ndb",
+    "database/nostr-sqlite",
 
     # Gossip
     "gossip/nostr-gossip",
     "gossip/nostr-gossip-memory",
+    "gossip/nostr-gossip-sqlite",
     "gossip/nostr-gossip-test-suite",
 
     # Remote File Storage implementations
@@ -48,6 +50,7 @@ nostr-database = { version = "0.44", path = "./database/nostr-database", default
 nostr-database-test-suite = { path = "./database/nostr-database-test-suite" }
 nostr-gossip = { version = "0.44", path = "./gossip/nostr-gossip", default-features = false }
 nostr-gossip-memory = { version = "0.44", path = "./gossip/nostr-gossip-memory", default-features = false }
+nostr-gossip-sqlite = { version = "0.44", path = "./gossip/nostr-gossip-sqlite", default-features = false }
 nostr-gossip-test-suite = { path = "./gossip/nostr-gossip-test-suite" }
 nostr-lmdb = { version = "0.44", path = "./database/nostr-lmdb", default-features = false }
 nostr-ndb = { version = "0.44", path = "./database/nostr-ndb", default-features = false }
@@ -56,6 +59,7 @@ nostr-relay-pool = { version = "0.44", path = "./crates/nostr-relay-pool", defau
 reqwest = { version = "0.12", default-features = false }
 serde = { version = "1.0", default-features = false }
 serde_json = { version = "1.0", default-features = false }
+sqlx = "0.8"
 tempfile = "3.23"
 tokio = { version = ">=1.37", default-features = false }
 tracing = { version = "0.1", default-features = false }

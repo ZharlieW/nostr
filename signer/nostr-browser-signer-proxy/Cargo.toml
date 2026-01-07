@@ -13,7 +13,7 @@ keywords = ["nostr", "nip07", "browser", "signer", "proxy"]
 
 [dependencies]
 atomic-destructor.workspace = true
-bytes = "1.10"
+bytes = "1.11"
 http-body-util = "0.1"
 hyper = { version = "1.6", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
@@ -22,9 +22,9 @@ serde = { workspace = true, features = ["std", "derive"] }
 serde_json = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["macros", "net", "rt", "rt-multi-thread", "sync", "time"] }
 tracing = { workspace = true, features = ["std"] }
-uuid = { version = "1.17", features = ["serde", "v4"] }
+uuid = { version = "1.18", features = ["serde", "v4"] }
 
 [dev-dependencies]
-nostr = { workspace = true, features = ["nip59"] }
+nostr = { workspace = true, features = ["os-rng", "nip59"] }
 tokio = { workspace = true, features = ["signal"] }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }

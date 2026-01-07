@@ -23,6 +23,27 @@
 
 -->
 
+## Unreleased
+
+### Breaking changes
+
+- Change `LocalRelay::new` constructor signature (https://github.com/rust-nostr/nostr/pull/1147)
+- Allow only a single `write` and `query` policy (https://github.com/rust-nostr/nostr/pull/1165)
+- Replace `PolicyResult` with `WritePolicyResult` and `QueryPolicyResult` (https://github.com/rust-nostr/nostr/pull/1166)
+
+### Changes
+
+- Rename all `RelayBuilder*` structs and enums to `LocalRelayBuilder*` (https://github.com/rust-nostr/nostr/pull/1145)
+- Move write policy checks between mode and ephemeral kind checks (https://github.com/rust-nostr/nostr/pull/1155)
+
+### Added
+
+- Add `LocalRelay::builder` constructor (https://github.com/rust-nostr/nostr/pull/1147)
+- Add `LocalRelayBuilder::build` method (https://github.com/rust-nostr/nostr/pull/1147)
+- Impl `Default` for `LocalRelay` (https://github.com/rust-nostr/nostr/pull/1147)
+- Add `LocalRelay::sync_with` method (https://github.com/rust-nostr/nostr/pull/1146)
+- Reject expired events and ensure they are not sent to clients (https://github.com/rust-nostr/nostr/pull/1183)
+
 ## v0.44.0 - 2025/11/06
 
 ### Breaking change

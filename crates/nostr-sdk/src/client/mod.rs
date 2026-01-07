@@ -294,21 +294,12 @@ impl Client {
         let opts: RelayOptions = opts.flags(flag);
 
         // Add relay with opts or edit current one
-        // TODO: remove clone here
-        match self.pool.__get_or_add_relay(url.clone(), opts).await? {
+        match self.pool.__get_or_add_relay(url, opts).await? {
             Some(relay) => {
                 relay.flags().add(flag);
                 Ok(false)
             }
-            None => {
-                // TODO: move autoconnect to `Relay`?
-                // Connect if `autoconnect` is enabled
-                if self.opts.autoconnect {
-                    self.connect_relay::<RelayUrl>(url).await?;
-                }
-
-                Ok(true)
-            }
+            None => Ok(true),
         }
     }
 
@@ -563,13 +554,16 @@ impl Client {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn subscribe(
+    pub async fn subscribe<F>(
         &self,
-        filter: Filter,
+        filters: F,
         opts: Option<SubscribeAutoCloseOptions>,
-    ) -> Result<Output<SubscriptionId>, Error> {
+    ) -> Result<Output<SubscriptionId>, Error>
+    where
+        F: Into<Vec<Filter>>,
+    {
         let id: SubscriptionId = SubscriptionId::generate();
-        let output: Output<()> = self.subscribe_with_id(id.clone(), filter, opts).await?;
+        let output: Output<()> = self.subscribe_with_id(id.clone(), filters, opts).await?;
         Ok(Output {
             val: id,
             success: output.success,
@@ -587,17 +581,20 @@ impl Client {
     /// It's possible to automatically close a subscription by configuring the [SubscribeAutoCloseOptions].
     ///
     /// Note: auto-closing subscriptions aren't saved in subscriptions map!
-    pub async fn subscribe_with_id(
+    pub async fn subscribe_with_id<F>(
         &self,
         id: SubscriptionId,
-        filter: Filter,
+        filters: F,
         opts: Option<SubscribeAutoCloseOptions>,
-    ) -> Result<Output<()>, Error> {
+    ) -> Result<Output<()>, Error>
+    where
+        F: Into<Vec<Filter>>,
+    {
         let opts: SubscribeOptions = SubscribeOptions::default().close_on(opts);
 
         match &self.gossip {
-            Some(gossip) => self.gossip_subscribe(gossip, id, filter, opts).await,
-            None => Ok(self.pool.subscribe_with_id(id, filter, opts).await?),
+            Some(gossip) => self.gossip_subscribe(gossip, id, filters, opts).await,
+            None => Ok(self.pool.subscribe_with_id(id, filters, opts).await?),
         }
     }
 
@@ -610,19 +607,20 @@ impl Client {
     ///
     /// It's possible to automatically close a subscription by configuring the [SubscribeAutoCloseOptions].
     #[inline]
-    pub async fn subscribe_to<I, U>(
+    pub async fn subscribe_to<I, U, F>(
         &self,
         urls: I,
-        filter: Filter,
+        filters: F,
         opts: Option<SubscribeAutoCloseOptions>,
     ) -> Result<Output<SubscriptionId>, Error>
     where
         I: IntoIterator<Item = U>,
         U: TryIntoUrl,
+        F: Into<Vec<Filter>>,
         pool::Error: From<<U as TryIntoUrl>::Err>,
     {
         let opts: SubscribeOptions = SubscribeOptions::default().close_on(opts);
-        Ok(self.pool.subscribe_to(urls, filter, opts).await?)
+        Ok(self.pool.subscribe_to(urls, filters, opts).await?)
     }
 
     /// Subscribe to filter with custom [SubscriptionId] to specific relays
@@ -631,22 +629,23 @@ impl Client {
     ///
     /// It's possible to automatically close a subscription by configuring the [SubscribeAutoCloseOptions].
     #[inline]
-    pub async fn subscribe_with_id_to<I, U>(
+    pub async fn subscribe_with_id_to<I, U, F>(
         &self,
         urls: I,
         id: SubscriptionId,
-        filter: Filter,
+        filters: F,
         opts: Option<SubscribeAutoCloseOptions>,
     ) -> Result<Output<()>, Error>
     where
         I: IntoIterator<Item = U>,
         U: TryIntoUrl,
+        F: Into<Vec<Filter>>,
         pool::Error: From<<U as TryIntoUrl>::Err>,
     {
         let opts: SubscribeOptions = SubscribeOptions::default().close_on(opts);
         Ok(self
             .pool
-            .subscribe_with_id_to(urls, id, filter, opts)
+            .subscribe_with_id_to(urls, id, filters, opts)
             .await?)
     }
 
@@ -654,15 +653,16 @@ impl Client {
     ///
     /// Subscribe to specific relays with specific filters
     #[inline]
-    pub async fn subscribe_targeted<I, U>(
+    pub async fn subscribe_targeted<I, U, F>(
         &self,
         id: SubscriptionId,
         targets: I,
         opts: SubscribeOptions,
     ) -> Result<Output<()>, Error>
     where
-        I: IntoIterator<Item = (U, Filter)>,
+        I: IntoIterator<Item = (U, F)>,
         U: TryIntoUrl,
+        F: Into<Vec<Filter>>,
         pool::Error: From<<U as TryIntoUrl>::Err>,
     {
         Ok(self.pool.subscribe_targeted(id, targets, opts).await?)
@@ -746,15 +746,18 @@ impl Client {
     ///     .unwrap();
     /// # }
     /// ```
-    pub async fn fetch_events(&self, filter: Filter, timeout: Duration) -> Result<Events, Error> {
+    pub async fn fetch_events<F>(&self, filters: F, timeout: Duration) -> Result<Events, Error>
+    where
+        F: Into<Vec<Filter>>,
+    {
         match &self.gossip {
             Some(gossip) => {
-                self.gossip_fetch_events(gossip, filter, timeout, ReqExitPolicy::ExitOnEOSE)
+                self.gossip_fetch_events(gossip, filters, timeout, ReqExitPolicy::ExitOnEOSE)
                     .await
             }
             None => Ok(self
                 .pool
-                .fetch_events(filter, timeout, ReqExitPolicy::ExitOnEOSE)
+                .fetch_events(filters, timeout, ReqExitPolicy::ExitOnEOSE)
                 .await?),
         }
     }
@@ -767,20 +770,21 @@ impl Client {
     /// To use another exit policy, check [`RelayPool::fetch_events_from`].
     /// For long-lived subscriptions, check [`Client::subscribe_to`].
     #[inline]
-    pub async fn fetch_events_from<I, U>(
+    pub async fn fetch_events_from<I, U, F>(
         &self,
         urls: I,
-        filter: Filter,
+        filters: F,
         timeout: Duration,
     ) -> Result<Events, Error>
     where
         I: IntoIterator<Item = U>,
         U: TryIntoUrl,
+        F: Into<Vec<Filter>>,
         pool::Error: From<<U as TryIntoUrl>::Err>,
     {
         Ok(self
             .pool
-            .fetch_events_from(urls, filter, timeout, ReqExitPolicy::ExitOnEOSE)
+            .fetch_events_from(urls, filters, timeout, ReqExitPolicy::ExitOnEOSE)
             .await?)
     }
 
@@ -855,20 +859,31 @@ impl Client {
     ///
     /// If `gossip` is enabled the events will be streamed also from
     /// NIP65 relays (automatically discovered) of public keys included in filters (if any).
-    pub async fn stream_events(
+    pub async fn stream_events<F>(
         &self,
-        filter: Filter,
+        filters: F,
         timeout: Duration,
-    ) -> Result<BoxedStream<Event>, Error> {
+    ) -> Result<BoxedStream<(RelayUrl, Result<Event, Error>)>, Error>
+    where
+        F: Into<Vec<Filter>>,
+    {
         match &self.gossip {
             Some(gossip) => {
-                self.gossip_stream_events(gossip, filter, timeout, ReqExitPolicy::ExitOnEOSE)
+                self.gossip_stream_events(gossip, filters, timeout, ReqExitPolicy::ExitOnEOSE)
                     .await
             }
-            None => Ok(self
-                .pool
-                .stream_events(filter, timeout, ReqExitPolicy::ExitOnEOSE)
-                .await?),
+            None => {
+                let stream = self
+                    .pool
+                    .stream_events(filters, timeout, ReqExitPolicy::ExitOnEOSE)
+                    .await?;
+
+                // Map stream to change the error type
+                let stream = stream.map(|(u, r)| (u, r.map_err(Error::from)));
+
+                // Box the stream
+                Ok(Box::pin(stream))
+            }
         }
     }
 
@@ -880,21 +895,28 @@ impl Client {
     /// To use another exit policy, check [`RelayPool::stream_events_from`].
     /// For long-lived subscriptions, check [`Client::subscribe_to`].
     #[inline]
-    pub async fn stream_events_from<I, U>(
+    pub async fn stream_events_from<I, U, F>(
         &self,
         urls: I,
-        filter: Filter,
+        filters: F,
         timeout: Duration,
-    ) -> Result<BoxedStream<Event>, Error>
+    ) -> Result<BoxedStream<(RelayUrl, Result<Event, Error>)>, Error>
     where
         I: IntoIterator<Item = U>,
         U: TryIntoUrl,
+        F: Into<Vec<Filter>>,
         pool::Error: From<<U as TryIntoUrl>::Err>,
     {
-        Ok(self
+        let stream = self
             .pool
-            .stream_events_from(urls, filter, timeout, ReqExitPolicy::default())
-            .await?)
+            .stream_events_from(urls, filters, timeout, ReqExitPolicy::default())
+            .await?;
+
+        // Map stream to change the error type
+        let stream = stream.map(|(u, r)| (u, r.map_err(Error::from)));
+
+        // Box the stream
+        Ok(Box::pin(stream))
     }
 
     /// Stream events from specific relays with specific filters
@@ -904,15 +926,27 @@ impl Client {
     /// This is an **auto-closing subscription** and will be closed automatically on `EOSE`.
     /// To use another exit policy, check [`RelayPool::stream_events_targeted`].
     /// For long-lived subscriptions, check [`Client::subscribe_targeted`].
-    pub async fn stream_events_targeted(
+    pub async fn stream_events_targeted<I, U, F>(
         &self,
-        targets: HashMap<RelayUrl, Filter>,
+        targets: I,
         timeout: Duration,
-    ) -> Result<BoxedStream<Event>, Error> {
-        Ok(self
+    ) -> Result<BoxedStream<(RelayUrl, Result<Event, Error>)>, Error>
+    where
+        I: IntoIterator<Item = (U, F)>,
+        U: TryIntoUrl,
+        F: Into<Vec<Filter>>,
+        pool::Error: From<<U as TryIntoUrl>::Err>,
+    {
+        let stream = self
             .pool
             .stream_events_targeted(targets, timeout, ReqExitPolicy::default())
-            .await?)
+            .await?;
+
+        // Map stream to change the error type
+        let stream = stream.map(|(u, r)| (u, r.map_err(Error::from)));
+
+        // Box the stream
+        Ok(Box::pin(stream))
     }
 
     /// Send the client message to a **specific relays**
@@ -1652,7 +1686,12 @@ impl Client {
 
         // Broken-down filters
         let filters: HashMap<RelayUrl, Filter> = match gossip
-            .break_down_filter(filter, pattern, &self.opts.gossip.limits)
+            .break_down_filter(
+                filter,
+                pattern,
+                &self.opts.gossip.limits,
+                self.opts.gossip.allowed,
+            )
             .await?
         {
             BrokenDownFilters::Filters(filters) => filters,
@@ -1682,6 +1721,34 @@ impl Client {
         }
 
         Ok(filters)
+    }
+
+    /// Break down filters for gossip and discovery relays
+    async fn break_down_filters<F>(
+        &self,
+        gossip: &GossipWrapper,
+        filters: F,
+    ) -> Result<HashMap<RelayUrl, Vec<Filter>>, Error>
+    where
+        F: Into<Vec<Filter>>,
+    {
+        let filters: Vec<Filter> = filters.into();
+
+        let mut output: HashMap<RelayUrl, HashSet<Filter>> = HashMap::new();
+
+        for filter in filters {
+            let f = self.break_down_filter(gossip, filter).await?;
+
+            for (url, filter) in f {
+                output.entry(url).or_default().insert(filter);
+            }
+        }
+
+        // TODO: avoid this and returns the HashSet. At the moment this is required due to the Into<Vec<Filter>>
+        Ok(output
+            .into_iter()
+            .map(|(k, v)| (k, v.into_iter().collect()))
+            .collect())
     }
 
     async fn gossip_send_event(
@@ -1728,6 +1795,7 @@ impl Client {
                 .get_relays(
                     event.tags.public_keys(),
                     BestRelaySelection::PrivateMessage { limit: 3 },
+                    self.opts.gossip.allowed,
                 )
                 .await?;
 
@@ -1758,6 +1826,7 @@ impl Client {
                         hints: 1,
                         most_received: 1,
                     },
+                    self.opts.gossip.allowed,
                 )
                 .await?;
 
@@ -1772,6 +1841,7 @@ impl Client {
                             hints: 1,
                             most_received: 1,
                         },
+                        self.opts.gossip.allowed,
                     )
                     .await?;
 
@@ -1799,54 +1869,86 @@ impl Client {
         Ok(self.pool.send_event_to(urls, event).await?)
     }
 
-    async fn gossip_stream_events(
+    async fn gossip_stream_events<F>(
         &self,
         gossip: &GossipWrapper,
-        filter: Filter,
+        filters: F,
         timeout: Duration,
         policy: ReqExitPolicy,
-    ) -> Result<BoxedStream<Event>, Error> {
-        let filters = self.break_down_filter(gossip, filter).await?;
+    ) -> Result<BoxedStream<(RelayUrl, Result<Event, Error>)>, Error>
+    where
+        F: Into<Vec<Filter>>,
+    {
+        let filters = self.break_down_filters(gossip, filters).await?;
 
         // Stream events
-        let stream: BoxedStream<Event> = self
+        let stream = self
             .pool
             .stream_events_targeted(filters, timeout, policy)
             .await?;
 
-        Ok(stream)
+        // Map stream to change the error type
+        let stream = stream.map(|(u, r)| (u, r.map_err(Error::from)));
+
+        // Box the stream
+        Ok(Box::pin(stream))
     }
 
-    async fn gossip_fetch_events(
+    async fn gossip_fetch_events<F>(
         &self,
         gossip: &GossipWrapper,
-        filter: Filter,
+        filters: F,
         timeout: Duration,
         policy: ReqExitPolicy,
-    ) -> Result<Events, Error> {
-        let mut events: Events = Events::new(&filter);
+    ) -> Result<Events, Error>
+    where
+        F: Into<Vec<Filter>>,
+    {
+        let filters: Vec<Filter> = filters.into();
+
+        // Construct a new events collection
+        let mut events: Events = if filters.len() == 1 {
+            // SAFETY: this can't panic because the filters are already verified that list isn't empty.
+            let filter: &Filter = &filters[0];
+            Events::new(filter)
+        } else {
+            // More than a filter, so we can't ensure to respect the limit -> construct a default collection.
+            Events::default()
+        };
 
         // Stream events
-        let mut stream: BoxedStream<Event> = self
-            .gossip_stream_events(gossip, filter, timeout, policy)
+        let mut stream = self
+            .gossip_stream_events(gossip, filters, timeout, policy)
             .await?;
 
-        while let Some(event) = stream.next().await {
-            // To find out more about why the `force_insert` was used, search for EVENTS_FORCE_INSERT ine the code.
-            events.force_insert(event);
+        while let Some((url, result)) = stream.next().await {
+            // NOTE: not propagate the error here! A single error by any of the relays would stop the entire fetching process.
+            match result {
+                Ok(event) => {
+                    // To find out more about why the `force_insert` was used, search for EVENTS_FORCE_INSERT in the code.
+                    events.force_insert(event);
+                }
+                Err(e) => {
+                    // TODO: use the Output<Events>
+                    tracing::error!(url = %url, error = %e, "Failed to handle streamed event");
+                }
+            }
         }
 
         Ok(events)
     }
 
-    async fn gossip_subscribe(
+    async fn gossip_subscribe<F>(
         &self,
         gossip: &GossipWrapper,
         id: SubscriptionId,
-        filter: Filter,
+        filters: F,
         opts: SubscribeOptions,
-    ) -> Result<Output<()>, Error> {
-        let filters = self.break_down_filter(gossip, filter).await?;
+    ) -> Result<Output<()>, Error>
+    where
+        F: Into<Vec<Filter>>,
+    {
+        let filters = self.break_down_filters(gossip, filters).await?;
         Ok(self.pool.subscribe_targeted(id, filters, opts).await?)
     }
 
