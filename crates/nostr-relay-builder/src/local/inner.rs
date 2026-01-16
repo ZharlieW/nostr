@@ -47,6 +47,7 @@ pub(super) struct InnerLocalRelay {
     mode: LocalRelayBuilderMode,
     rate_limit: RateLimit,
     connections_limit: Arc<Semaphore>,
+    max_connections: usize,
     max_subid_length: usize,
     max_filter_limit: Option<usize>,
     default_filter_limit: usize,
@@ -97,6 +98,7 @@ impl InnerLocalRelay {
             mode: builder.mode,
             rate_limit: builder.rate_limit,
             connections_limit: Arc::new(Semaphore::new(max_connections)),
+            max_connections,
             max_subid_length: builder.max_subid_length,
             max_filter_limit: builder.max_filter_limit,
             default_filter_limit: builder.default_filter_limit,
@@ -255,6 +257,13 @@ impl InnerLocalRelay {
     pub fn shutdown(&self) {
         // There are at least 2 waiters
         self.shutdown.notify_waiters()
+    }
+
+    /// Get the current number of active connections
+    #[inline]
+    pub fn connection_count(&self) -> usize {
+        let available = self.connections_limit.available_permits();
+        self.max_connections.saturating_sub(available)
     }
 
     /// Handle already upgraded HTTP request

@@ -116,4 +116,10 @@ impl LocalRelay {
     {
         self.inner.handle_upgraded_connection(stream, addr).await
     }
+
+    /// Get the current number of active connections
+    #[inline]
+    pub fn connection_count(&self) -> usize {
+        self.inner.connection_count()
+    }
 }
