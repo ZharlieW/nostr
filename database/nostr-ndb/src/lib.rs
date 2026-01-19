@@ -23,7 +23,7 @@ use nostrdb::{
     Config, Filter as NdbFilter, IngestMetadata, Ndb, NdbStrVariant, Note, QueryResult, Transaction,
 };
 
-const MAX_RESULTS: i32 = 10_000;
+const MAX_RESULTS: i32 = 1_000_000;
 
 // Wrap `Ndb` into `NdbDatabase` because only traits defined in the current crate can be implemented for types defined outside the crate!
 
