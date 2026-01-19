@@ -138,12 +138,7 @@ impl NostrDatabase for NdbDatabase {
     fn count(&self, filter: Filter) -> BoxedFuture<Result<usize, DatabaseError>> {
         Box::pin(async move {
             let txn: Transaction = Transaction::new(&self.db).map_err(DatabaseError::backend)?;
-            // For count operations, use a very large limit to avoid MAX_RESULTS restriction
-            let mut count_filter = filter;
-            if count_filter.limit.is_none() {
-                count_filter.limit = Some(i32::MAX as usize);
-            }
-            let res: Vec<QueryResult> = ndb_query(&self.db, &txn, &count_filter)?;
+            let res: Vec<QueryResult> = ndb_query(&self.db, &txn, &filter)?;
             Ok(res.len())
         })
     }
